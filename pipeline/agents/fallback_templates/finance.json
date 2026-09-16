@@ -1,0 +1,27 @@
+{
+  "topic": "The Wealth Principle Nobody Taught You",
+  "niche": "finance",
+  "target_duration": 30,
+  "hook": "The wealthiest one percent never rely on conventional saving advice, and here is why.",
+  "segments": [
+    {
+      "segment_index": 1,
+      "narration": "Inflation quietly drains purchasing power when capital sits idle in traditional accounts.",
+      "visual_query": "stack of golden bullion coins and green dollar notes dramatic studio lighting",
+      "duration_seconds": 9.0
+    },
+    {
+      "segment_index": 2,
+      "narration": "Instead, institutional capital moves into compounding assets that generate cash flow regardless of market cycles.",
+      "visual_query": "financial stock market chart trading screen green candlestick upward trend",
+      "duration_seconds": 10.0
+    },
+    {
+      "segment_index": 3,
+      "narration": "Building financial resilience begins with mastering the spread between earned income and invested assets.",
+      "visual_query": "luxurious modern corporate skyscraper window overlooking thriving financial district",
+      "duration_seconds": 11.0
+    }
+  ],
+  "cta": "Follow for daily financial leverage principles."
+}

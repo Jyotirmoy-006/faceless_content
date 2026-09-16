@@ -1,0 +1,27 @@
+{
+  "topic": "The Artificial Intelligence Breakthrough",
+  "niche": "tech",
+  "target_duration": 30,
+  "hook": "Artificial intelligence just crossed a threshold nobody thought was possible this year.",
+  "segments": [
+    {
+      "segment_index": 1,
+      "narration": "Engineers discovered that scaling neural models unlocked capabilities not even in the training data.",
+      "visual_query": "glowing digital neural network silicon microchip data stream futuristic 4k",
+      "duration_seconds": 9.0
+    },
+    {
+      "segment_index": 2,
+      "narration": "Automated reasoning systems are now solving problems in minutes that once took human teams months.",
+      "visual_query": "cyberpunk holographic coding screen data visualization dark aesthetic",
+      "duration_seconds": 10.0
+    },
+    {
+      "segment_index": 3,
+      "narration": "The speed of adoption means the tools you rely on tomorrow are being written right now.",
+      "visual_query": "futuristic city skyline at night drone flying cybernetic glow",
+      "duration_seconds": 11.0
+    }
+  ],
+  "cta": "Subscribe to stay ahead of the next tech wave."
+}

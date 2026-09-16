@@ -1,0 +1,70 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Secrets & Environment Variables
+.env
+client_secrets.json
+*.token.json
+*_token.json
+youtube_token.json
+quota_state.json
+
+# Staging & Output (Rule 1 & Project Scaffold)
+output/*
+!output/.gitkeep
+pipeline/output/*
+!pipeline/output/.gitkeep
+
+# Local Assets Cache
+assets_cache/*
+!assets_cache/.gitkeep
+pipeline/assets_cache/*
+!pipeline/assets_cache/.gitkeep
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Lock files & temp runs (Rule 7: Scheduler safety)
+*.run.lock
+*.gpu.lock
+pipeline.lock
+*.lock
+circuit_breaker_state.json
+alerts.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+
+# Heavy Model Weights & Local AI Models (Exceeds GitHub 50MB/100MB file limit)
+pipeline/models/
+ComfyUI/
+*.safetensors
+*.onnx
+*.ckpt
+*.pt
+*.bin

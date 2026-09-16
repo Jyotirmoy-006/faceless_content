@@ -1,0 +1,27 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# Deep Learning / GPU Acceleration (NVIDIA RTX 3050 4GB VRAM - CUDA 12.4)
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+torchaudio==2.6.0+cu124
+
+# Video & Audio Processing
+moviepy
+ffmpeg-python
+
+# Speech & Transcription
+openai-whisper
+edge-tts
+piper-tts
+
+# Data Validation & LLM
+pydantic>=2.0
+google-genai
+
+# Utilities
+requests
+python-dotenv
+boto3
+google-api-python-client
+google-auth-oauthlib
+

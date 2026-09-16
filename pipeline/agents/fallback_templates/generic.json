@@ -1,0 +1,27 @@
+{
+  "topic": "Surprising Facts You Did Not Know",
+  "niche": "general",
+  "target_duration": 30,
+  "hook": "Here is a truth that sounds completely made up until you hear the proof.",
+  "segments": [
+    {
+      "segment_index": 1,
+      "narration": "Most everyday phenomena hold secrets we completely overlook in daily life.",
+      "visual_query": "mysterious glowing galaxy or macro physics phenomenon cinematic",
+      "duration_seconds": 9.0
+    },
+    {
+      "segment_index": 2,
+      "narration": "When researchers looked closer, the reality overturned decades of common assumptions.",
+      "visual_query": "scientist looking through advanced microscope modern lab high detail",
+      "duration_seconds": 10.0
+    },
+    {
+      "segment_index": 3,
+      "narration": "Understanding this shifts how you perceive the world around you starting today.",
+      "visual_query": "person looking at sunrise city horizon contemplative epic lighting",
+      "duration_seconds": 11.0
+    }
+  ],
+  "cta": "Follow for more mind-bending discoveries every day."
+}
