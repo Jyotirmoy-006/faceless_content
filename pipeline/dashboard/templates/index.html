@@ -1,0 +1,2075 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engineering Control Node — Autonomous Video Studio</title>
+  <meta name="description" content="High-observability Engineering Command Center with SQLite Sequential Queue, Live Stage Telemetry, and Human-in-the-Loop Review.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"Fira Code"', 'monospace'],
+          },
+          colors: {
+            zinc: {
+              850: '#1e1e22',
+              900: '#18181b',
+              950: '#09090b',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #09090b;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 3px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+    @keyframes pulse-emerald {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.15); }
+    }
+    .pulse-dot-emerald {
+      animation: pulse-emerald 1.8s infinite ease-in-out;
+    }
+    @keyframes pulse-indigo {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .pulse-stage {
+      animation: pulse-indigo 1.5s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased selection:bg-indigo-500 selection:text-white flex flex-col">
+
+  <!-- TOP APP BAR -->
+  <header class="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Brand & Title -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center shadow-md">
+          <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-sm font-bold tracking-tight text-white uppercase">COMMAND CENTER</h1>
+            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">Engineering Control Node</span>
+          </div>
+          <p class="text-xs text-zinc-400">Autonomous Video Engine & High-Observability Pipeline</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex items-center gap-1 bg-zinc-900/80 p-1 rounded-xl border border-zinc-800 text-xs font-medium">
+        <button id="tab-btn-studio" onclick="switchTab('studio')" class="tab-btn active px-3.5 py-1.5 rounded-lg bg-zinc-800 text-white shadow-sm transition-all">
+          Studio
+        </button>
+        <button id="tab-btn-review" onclick="switchTab('review')" class="tab-btn px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-1.5">
+          Review
+          <span id="review-counter-badge" class="hidden px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">0</span>
+        </button>
+        <button id="tab-btn-gallery" onclick="switchTab('gallery')" class="tab-btn px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+          Gallery
+        </button>
+      </nav>
+
+      <!-- Quick Metrics & Node State -->
+      <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        
+        <!-- System Status Badge -->
+        <div id="system-status-badge" class="flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-zinc-900 text-emerald-400 border border-zinc-800">
+          <span id="system-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot-emerald"></span>
+          <span id="system-status-text">NODE IDLE</span>
+        </div>
+
+        <!-- Free VRAM Badge -->
+        <div class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono">
+          <span class="text-zinc-400">VRAM:</span>
+          <span id="vram-val" class="font-bold text-zinc-200">-- MB</span>
+        </div>
+
+        <!-- YouTube Quota Badge -->
+        <div class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono">
+          <span class="text-zinc-400">Quota:</span>
+          <span id="quota-val" class="font-bold text-zinc-200">--/10000</span>
+          <button onclick="resetQuota()" title="Reset Quota" class="text-zinc-400 hover:text-indigo-400 ml-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+        </div>
+
+        <!-- Circuit Breaker Badge -->
+        <div class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono">
+          <span class="text-zinc-400">Breaker:</span>
+          <span id="breaker-val" class="font-bold text-emerald-400">CLOSED</span>
+          <button onclick="resetCircuitBreaker()" title="Reset Circuit Breaker" class="text-zinc-400 hover:text-emerald-400 ml-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- ==================================================================== -->
+    <!-- TAB 1: STUDIO (Workflow + Live Stepper + Log Terminal + Job Queue)   -->
+    <!-- ==================================================================== -->
+    <div id="tab-studio" class="tab-content space-y-6">
+      
+      <!-- LIVE TELEMETRY STAGE STEPPER (Top Banner) -->
+      <div id="stepper-card" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-2.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-indigo-500 pulse-stage"></span>
+            <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-200">Simulation Telemetry & Stage Tracker</h2>
+          </div>
+          <div id="stepper-active-meta" class="text-xs font-mono text-zinc-400">
+            Status: <span id="stepper-status-text" class="text-zinc-300 font-semibold">IDLE</span>
+          </div>
+        </div>
+
+        <!-- 5-Stage Visual Stepper -->
+        <div class="grid grid-cols-5 gap-2 sm:gap-4 relative">
+          
+          <!-- Stage 1: Ideation -->
+          <div id="step-IDEATION" class="step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage 01</span>
+              <span class="step-badge w-2 h-2 rounded-full bg-zinc-700"></span>
+            </div>
+            <div class="step-label text-xs font-semibold text-zinc-300">Ideator</div>
+            <div class="text-[11px] text-zinc-500 truncate">Viral Hooks</div>
+          </div>
+
+          <!-- Stage 2: Scriptwriting -->
+          <div id="step-SCRIPTWRITING" class="step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage 02</span>
+              <span class="step-badge w-2 h-2 rounded-full bg-zinc-700"></span>
+            </div>
+            <div class="step-label text-xs font-semibold text-zinc-300">Scriptwriter</div>
+            <div class="text-[11px] text-zinc-500 truncate">Pacing & Beats</div>
+          </div>
+
+          <!-- Stage 3: Audio TTS -->
+          <div id="step-AUDIO_TTS" class="step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage 03</span>
+              <span class="step-badge w-2 h-2 rounded-full bg-zinc-700"></span>
+            </div>
+            <div class="step-label text-xs font-semibold text-zinc-300">Voice TTS</div>
+            <div class="text-[11px] text-zinc-500 truncate">Audio Synthesis</div>
+          </div>
+
+          <!-- Stage 4: Render -->
+          <div id="step-RENDER" class="step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage 04</span>
+              <span class="step-badge w-2 h-2 rounded-full bg-zinc-700"></span>
+            </div>
+            <div class="step-label text-xs font-semibold text-zinc-300">Renderer</div>
+            <div class="text-[11px] text-zinc-500 truncate">Visuals & Captions</div>
+          </div>
+
+          <!-- Stage 5: Publish -->
+          <div id="step-PUBLISH" class="step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage 05</span>
+              <span class="step-badge w-2 h-2 rounded-full bg-zinc-700"></span>
+            </div>
+            <div class="step-label text-xs font-semibold text-zinc-300">Publisher</div>
+            <div class="text-[11px] text-zinc-500 truncate">Distribution</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- WORKFLOW GRID: Left = Input & Queue | Right = Permanent Terminal -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <!-- LEFT COLUMN: Input Form & Queue (col-span-7) -->
+        <div class="lg:col-span-7 space-y-6">
+
+          <!-- QUEUE VIDEO INPUT CARD -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-200">Queue Video</h3>
+              </div>
+              <span class="text-[11px] text-zinc-500 font-mono">Rule 1 & 7 Sequential Isolation</span>
+            </div>
+
+            <!-- Form -->
+            <form id="start-job-form" onsubmit="handleQueueJob(event)" class="space-y-4">
+              
+              <!-- Topic Input -->
+              <div>
+                <label for="input-topic" class="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Concept Topic <span class="text-zinc-500 font-normal">(Leave blank to let AI Ideator brainstorm)</span>
+                </label>
+                <input 
+                  type="text" 
+                  id="input-topic" 
+                  name="topic" 
+                  placeholder="e.g., The Quantum Computing Race or Neural Architecture" 
+                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-all font-mono"
+                />
+              </div>
+
+              <!-- Niche & Destination Row -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                
+                <!-- Niche Selector -->
+                <div>
+                  <label for="input-niche" class="block text-xs font-medium text-zinc-300 mb-1.5">Domain Niche</label>
+                  <select 
+                    id="input-niche" 
+                    name="niche" 
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="tech" selected>Tech & AI</option>
+                    <option value="science">Physics & Science</option>
+                    <option value="finance">Finance & Markets</option>
+                    <option value="history">History & Warfare</option>
+                  </select>
+                </div>
+
+                <!-- Destination Checkboxes -->
+                <div>
+                  <label class="block text-xs font-medium text-zinc-300 mb-1.5">Destination Target</label>
+                  <div class="flex items-center gap-4 pt-1 text-xs">
+                    <label class="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input type="radio" name="publish_target" value="youtube" checked class="text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 bg-zinc-950 border-zinc-700">
+                      <span>YouTube</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input type="radio" name="publish_target" value="disk_only" class="text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 bg-zinc-950 border-zinc-700">
+                      <span>Save to Disk Only</span>
+                    </label>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Human-in-the-Loop Toggle -->
+              <div class="pt-2 border-t border-zinc-800/80 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <input 
+                    type="checkbox" 
+                    id="require-approval-toggle" 
+                    name="require_approval" 
+                    checked 
+                    class="h-4 w-4 rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <label for="require-approval-toggle" class="text-xs text-zinc-300 cursor-pointer select-none">
+                    <span class="font-semibold text-zinc-200">Require Script Approval</span>
+                    <span class="block text-[11px] text-zinc-500">Pipeline pauses after Scriptwriting for human review</span>
+                  </label>
+                </div>
+
+                <!-- CTA Button -->
+                <button 
+                  type="submit" 
+                  id="btn-queue-job"
+                  class="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold text-xs tracking-wide shadow-md shadow-indigo-600/20 transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                  </svg>
+                  <span>Queue Job</span>
+                </button>
+              </div>
+
+            </form>
+          </div>
+
+          <!-- SEQUENTIAL JOB QUEUE & HISTORY TABLE -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+            <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-200">Execution Queue</h3>
+                <span id="queue-total-count" class="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono">0 jobs</span>
+              </div>
+              <button onclick="refreshQueue()" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 font-mono">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs text-zinc-300">
+                <thead class="bg-zinc-950/60 border-b border-zinc-800 text-zinc-500 uppercase font-mono text-[10px]">
+                  <tr>
+                    <th class="px-4 py-2.5">#ID</th>
+                    <th class="px-4 py-2.5">Topic</th>
+                    <th class="px-4 py-2.5">Status</th>
+                    <th class="px-4 py-2.5">Stage</th>
+                    <th class="px-4 py-2.5">Created</th>
+                    <th class="px-4 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="queue-table-body" class="divide-y divide-zinc-800/60 font-mono">
+                  <tr>
+                    <td colspan="6" class="px-4 py-6 text-center text-zinc-500 italic">Loading queue...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- RIGHT COLUMN: Permanent Observability Terminal (col-span-5) -->
+        <div class="lg:col-span-5 space-y-4 sticky top-20">
+          
+          <div class="bg-black border border-zinc-800 rounded-xl overflow-hidden shadow-lg flex flex-col h-[740px]">
+            
+            <!-- Terminal Header -->
+            <div class="px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between select-none">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span class="text-xs font-mono font-bold text-zinc-200">LIVE OBSERVABILITY STREAM</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs font-mono">
+                <label class="flex items-center gap-1.5 text-zinc-400 text-[11px] cursor-pointer">
+                  <input type="checkbox" id="autoscroll-toggle" checked class="rounded bg-zinc-950 border-zinc-700 text-indigo-500 h-3 w-3">
+                  <span>Auto-scroll</span>
+                </label>
+                <button onclick="clearTerminal()" class="text-zinc-500 hover:text-zinc-300 text-[11px] ml-2">Clear</button>
+              </div>
+            </div>
+
+            <!-- Terminal Output Area -->
+            <pre id="terminal-stream" class="flex-1 p-4 bg-black font-mono text-xs text-zinc-300 overflow-y-auto leading-relaxed custom-scroll whitespace-pre-wrap select-text">Connecting to pipeline log stream...</pre>
+
+            <!-- Terminal Footer -->
+            <div class="px-4 py-1.5 bg-zinc-950 border-t border-zinc-800/80 flex items-center justify-between text-[11px] font-mono text-zinc-500">
+              <span id="log-file-target">pipeline.log</span>
+              <span id="log-line-count">0 lines buffered</span>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- ==================================================================== -->
+    <!-- TAB 2: REVIEW (Human-in-the-Loop Script Approval)                   -->
+    <!-- ==================================================================== -->
+    <div id="tab-review" class="tab-content hidden space-y-6">
+      
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+          <div>
+            <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">Human-in-the-Loop Script Review</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">Inspect and refine AI-generated scripts before committing GPU render units.</p>
+          </div>
+          <button onclick="loadPendingReviews()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-300 flex items-center gap-1.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <span>Refresh Queue</span>
+          </button>
+        </div>
+
+        <!-- Pending Review Items Container -->
+        <div id="review-items-container" class="space-y-6">
+          <div class="p-8 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+            No scripts currently awaiting review. Queue a video with "Require Script Approval" to inspect it here.
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- ==================================================================== -->
+    <!-- TAB 3: GALLERY (Strict Raw vs Final Asset Separation)               -->
+    <!-- ==================================================================== -->
+    <div id="tab-gallery" class="tab-content hidden space-y-6">
+      
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
+        
+        <!-- Header & Primary Segregation Switcher -->
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">Asset Inspector & Vault</h2>
+              <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-zinc-950 text-indigo-400 border border-zinc-800">Mission M Segregation</span>
+            </div>
+            <p class="text-xs text-zinc-400 mt-0.5">Strict architectural isolation between intermediate raw materials and finished master deliverables.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <!-- Sub-tab Segregation Toggle -->
+            <div class="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs font-semibold">
+              <button 
+                id="gallery-subtab-final" 
+                onclick="switchGallerySubTab('final')" 
+                class="px-3.5 py-1.5 rounded-lg bg-zinc-800 text-white shadow-sm transition-all flex items-center gap-2"
+              >
+                <span>🎬 Final Published Artifacts</span>
+                <span id="gallery-final-count" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">0</span>
+              </button>
+              <button 
+                id="gallery-subtab-raw" 
+                onclick="switchGallerySubTab('raw')" 
+                class="px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-2"
+              >
+                <span>🗄️ Raw Materials & Workspaces</span>
+                <span id="gallery-raw-count" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">0</span>
+              </button>
+            </div>
+
+            <!-- Reload Button -->
+            <button onclick="loadCategorizedAssets()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-300 flex items-center gap-1.5 transition-all">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <span>Reload Assets</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- SEARCH & CATEGORY FILTER BAR -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80">
+          <div class="flex items-center gap-2 flex-1 max-w-md">
+            <svg class="w-4 h-4 text-zinc-500 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input 
+              type="text" 
+              id="gallery-search-input" 
+              oninput="handleGallerySearch(this.value)" 
+              placeholder="Search assets by filename, category, or path..." 
+              class="w-full bg-transparent border-none text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none font-mono"
+            />
+          </div>
+
+          <!-- Raw Material Category Filter Chips (visible only when in raw tab) -->
+          <div id="raw-filter-chips" class="hidden flex items-center gap-1.5 flex-wrap text-[11px] font-mono">
+            <button onclick="filterRawCategory('all')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-800 text-white font-medium">All</button>
+            <button onclick="filterRawCategory('pexels')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">Pexels Stock</button>
+            <button onclick="filterRawCategory('tts')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">TTS Chunks</button>
+            <button onclick="filterRawCategory('comfyui')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">ComfyUI Frames</button>
+            <button onclick="filterRawCategory('proxy')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">QA Proxies</button>
+            <button onclick="filterRawCategory('transcript')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">Whisper SRT</button>
+            <button onclick="filterRawCategory('staging')" class="raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800">Staging Clips</button>
+          </div>
+        </div>
+
+        <!-- 1. FINAL PUBLISHED ARTIFACTS CONTAINER -->
+        <div id="gallery-final-container" class="space-y-6">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span class="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono">Pristine Master Deliverables (pipeline/output)</span>
+            </div>
+            <span class="text-[11px] font-mono text-zinc-500">1080x1920 30fps CFR • Burned ASS Captions • Safe for Distribution</span>
+          </div>
+
+          <!-- Video Cards Grid -->
+          <div id="gallery-final-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div class="col-span-full p-8 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+              Loading final artifacts...
+            </div>
+          </div>
+
+          <!-- Associated Final Captions & Metadata Sub-section -->
+          <div id="gallery-final-aux-section" class="pt-4 border-t border-zinc-800/60 space-y-3">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 font-mono">Master Subtitle Scripts & Official Release Metadata</div>
+            <div id="gallery-final-aux-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <!-- Dynamically populated ASS scripts & JSON metadata -->
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. RAW MATERIALS & WORKSPACES CONTAINER -->
+        <div id="gallery-raw-container" class="hidden space-y-6">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span class="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono">Intermediate Workspaces & Component Cache (pipeline/assets_cache)</span>
+            </div>
+            <span class="text-[11px] font-mono text-zinc-500">Isolated Intermediate Pipeline Data • Zero Release Contamination</span>
+          </div>
+
+          <!-- Raw Materials Grid -->
+          <div id="gallery-raw-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div class="col-span-full p-8 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+              Loading raw intermediate materials...
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- HTML5 VIDEO MODAL PREVIEW -->
+  <div id="video-preview-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col">
+      <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
+        <h3 id="modal-video-title" class="text-xs font-bold font-mono text-zinc-200 truncate">Video Preview</h3>
+        <button onclick="closeVideoModal()" class="text-zinc-400 hover:text-white text-sm font-bold px-2 py-1 rounded-lg hover:bg-zinc-800">✕</button>
+      </div>
+      <div class="p-4 bg-black flex items-center justify-center">
+        <video id="modal-video-player" controls playsinline class="max-h-[650px] w-auto rounded-lg shadow-md border border-zinc-800">
+          Your browser does not support the video tag.
+        </video>
+      </div>
+      <div class="p-3 bg-zinc-950 border-t border-zinc-800 text-[11px] font-mono text-zinc-500 flex justify-between items-center gap-3 flex-wrap">
+        <span id="modal-video-meta">-- MB</span>
+        <div class="flex items-center gap-2.5">
+          <a id="modal-video-youtube" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-600/15 hover:bg-red-600/30 text-red-400 border border-red-500/30 transition-all font-semibold" title="Watch on YouTube">
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+            <span>Watch on YouTube</span>
+          </a>
+          <button id="modal-video-link-yt" type="button" onclick="promptSetCurrentModalVideoYouTube()" class="hidden items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all font-semibold text-[11px]" title="Attach genuine YouTube link">
+            <span>+ Link YouTube</span>
+          </button>
+          <a id="modal-video-agent-info" href="#" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all font-semibold" title="Download cognitive traces and inputs for every agent behind this video">
+            <span>📥 Download Agent Info</span>
+          </a>
+          <a id="modal-video-download" href="#" download class="text-indigo-400 hover:underline">Download MP4</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AGENTIC SIMULATION INSPECTOR MODAL (MISSION M) -->
+  <div id="simulation-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-2 sm:p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden shadow-2xl flex flex-col">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/90 gap-4 flex-wrap">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shadow-sm">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 id="sim-modal-title" class="text-sm font-bold font-sans text-zinc-100">Agentic Simulation Inspector</h3>
+              <span id="sim-modal-job-badge" class="text-[11px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-semibold">Job #--</span>
+              <span id="sim-modal-status-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">PASSED</span>
+            </div>
+            <p id="sim-modal-topic" class="text-xs text-zinc-400 font-sans truncate max-w-xl mt-0.5">Step-by-step cognitive telemetry and payload trace replay</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <a id="sim-modal-youtube-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-mono px-3 py-1 rounded-lg bg-red-600/15 hover:bg-red-600/25 border border-red-500/30 transition-all font-semibold" title="Watch on YouTube">
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+            <span>Watch on YouTube</span>
+          </a>
+          <button id="sim-modal-link-yt" type="button" onclick="promptSetCurrentSimJobYouTube()" class="hidden items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 font-mono px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-all font-semibold" title="Attach genuine YouTube link">
+            <span>+ Link YouTube</span>
+          </button>
+          <a id="sim-modal-download-btn" href="#" class="text-xs text-indigo-300 hover:text-white font-mono px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 transition-all font-semibold flex items-center gap-1.5" title="Download all agent traces as JSON">
+            <span>📥 Download Agent Info (JSON)</span>
+          </a>
+          <button onclick="expandAllSimSteps()" class="text-xs text-zinc-400 hover:text-zinc-200 font-mono px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-all">Expand All</button>
+          <button onclick="collapseAllSimSteps()" class="text-xs text-zinc-400 hover:text-zinc-200 font-mono px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-all">Collapse All</button>
+          <button onclick="closeSimulationModal()" class="text-zinc-400 hover:text-white text-base font-bold px-2 py-1 rounded-lg hover:bg-zinc-800 leading-none">✕</button>
+        </div>
+      </div>
+
+      <!-- Modal Body (Scrollable) -->
+      <div class="flex-1 overflow-y-auto custom-scroll p-6 space-y-6">
+        
+        <!-- Visual Agent Pipeline Node Graph -->
+        <div class="bg-zinc-950 border border-zinc-800/90 rounded-xl p-4 space-y-3 shadow-inner">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-stage"></span>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300 font-mono">Agent Execution Pipeline Graph</span>
+            </div>
+            <span id="sim-total-duration" class="text-[11px] font-mono text-zinc-400">Total Run Time: --s</span>
+          </div>
+
+          <!-- Dynamic Horizontal Pipeline Nodes -->
+          <div id="sim-node-graph" class="flex items-center gap-2 overflow-x-auto custom-scroll py-2 px-1">
+            <!-- Dynamically populated nodes -->
+          </div>
+        </div>
+
+        <!-- Chronological Step-by-Step Accordion -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between pb-1 border-b border-zinc-800/80">
+            <span class="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono">Chronological Step Payloads</span>
+            <span id="sim-step-count" class="text-[11px] font-mono text-zinc-500">0 steps recorded</span>
+          </div>
+
+          <div id="sim-accordion-container" class="space-y-3 font-sans">
+            <!-- Dynamically populated accordion steps -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3 bg-zinc-950 border-t border-zinc-800 flex items-center justify-between text-xs font-mono text-zinc-500 gap-3 flex-wrap">
+        <span class="flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+          <span>Granular execution traces persisted in SQLite simulation_steps</span>
+        </span>
+        <div class="flex items-center gap-2">
+          <a id="sim-modal-footer-download" href="#" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-sans font-semibold text-xs flex items-center gap-1.5" title="Export all agents telemetry as JSON">
+            <span>📥 Export All Agents' Telemetry</span>
+          </a>
+          <button onclick="closeSimulationModal()" class="px-4 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-sans font-semibold text-xs">Close Inspector</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- TEXT / TRANSCRIPT PREVIEW MODAL -->
+  <div id="text-preview-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+      <div class="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <h3 id="modal-text-title" class="text-xs font-bold font-mono text-zinc-200 truncate">Asset Content</h3>
+        <button onclick="closeTextModal()" class="text-zinc-400 hover:text-white text-sm font-bold px-2 py-1 rounded-lg hover:bg-zinc-800">✕</button>
+      </div>
+      <div class="p-4 flex-1 bg-black overflow-y-auto custom-scroll">
+        <pre id="modal-text-content" class="font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">Loading...</pre>
+      </div>
+      <div class="p-3 bg-zinc-950 border-t border-zinc-800 text-[11px] font-mono text-zinc-500 flex justify-between items-center">
+        <span id="modal-text-meta">Text Artifact</span>
+        <button onclick="copyTextModalContent()" class="text-indigo-400 hover:underline">Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- APPLICATION LOGIC (Vanilla JS) -->
+  <script>
+    // Global State
+    let activeTab = 'studio';
+    let lastLogText = '';
+    let autoScrollEnabled = true;
+
+    // Relative Time Formatter
+    function formatRelativeTime(dateInput) {
+      if (!dateInput) return 'just now';
+      try {
+        let s = String(dateInput).trim();
+        if (!s.endsWith('Z') && !s.includes('+') && (s.split('-').length - 1 <= 2)) {
+          s = s + 'Z';
+        }
+        const date = new Date(s);
+        if (isNaN(date.getTime())) return dateInput;
+        const now = new Date();
+        const diffSecs = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+        if (diffSecs < 10) return 'just now';
+        if (diffSecs < 60) return `${diffSecs}s ago`;
+        const diffMins = Math.floor(diffSecs / 60);
+        if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`;
+        const diffHours = Math.floor(diffMins / 60);
+        if (diffHours < 24) return `${diffHours} hr${diffHours > 1 ? 's' : ''} ago`;
+        const diffDays = Math.floor(diffHours / 24);
+        return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+      } catch (e) {
+        return dateInput;
+      }
+    }
+
+    // Toast Alert
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-950 border-emerald-800 text-emerald-200',
+        error: 'bg-red-950 border-red-800 text-red-200',
+        info: 'bg-zinc-900 border-zinc-800 text-zinc-200'
+      };
+      toast.className = `px-4 py-2.5 rounded-lg border shadow-lg text-xs font-mono pointer-events-auto transition-all ${colors[type] || colors.info}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    // Tab Switching
+    function switchTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active', 'bg-zinc-800', 'text-white');
+        btn.classList.add('text-zinc-400');
+      });
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+
+      const activeBtn = document.getElementById(`tab-btn-${tab}`);
+      const activeContent = document.getElementById(`tab-${tab}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active', 'bg-zinc-800', 'text-white');
+        activeBtn.classList.remove('text-zinc-400');
+      }
+      if (activeContent) activeContent.classList.remove('hidden');
+
+      if (tab === 'review') loadPendingReviews();
+      if (tab === 'gallery') loadCategorizedAssets();
+    }
+
+    // Stepper Renderer
+    const STAGE_KEYS = ['IDEATION', 'SCRIPTWRITING', 'AUDIO_TTS', 'RENDER', 'PUBLISH'];
+
+    function updateStepperUI(runningJob) {
+      const stepperMeta = document.getElementById('stepper-active-meta');
+      const stepperStatus = document.getElementById('stepper-status-text');
+
+      if (!runningJob) {
+        stepperStatus.textContent = 'SYSTEM IDLE';
+        stepperStatus.className = 'text-zinc-400 font-semibold';
+        STAGE_KEYS.forEach(key => {
+          const el = document.getElementById(`step-${key}`);
+          if (!el) return;
+          el.className = 'step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 transition-all opacity-60';
+          const badge = el.querySelector('.step-badge');
+          if (badge) badge.className = 'step-badge w-2 h-2 rounded-full bg-zinc-700';
+        });
+        return;
+      }
+
+      const stage = runningJob.current_stage || 'IDEATION';
+      const stageIdx = STAGE_KEYS.indexOf(stage);
+      stepperStatus.textContent = `JOB #${runningJob.id} [${stage}]`;
+      stepperStatus.className = 'text-indigo-400 font-bold';
+
+      STAGE_KEYS.forEach((key, idx) => {
+        const el = document.getElementById(`step-${key}`);
+        if (!el) return;
+        const badge = el.querySelector('.step-badge');
+
+        if (stage === 'PENDING_REVIEW' && key === 'SCRIPTWRITING') {
+          // Paused for review state
+          el.className = 'step-item p-3 rounded-lg border border-amber-500/50 bg-amber-500/10 flex flex-col gap-1 ring-1 ring-amber-500/30 transition-all';
+          if (badge) badge.className = 'step-badge w-2 h-2 rounded-full bg-amber-400 pulse-stage';
+        } else if (stageIdx !== -1 && idx < stageIdx) {
+          // Past completed stage
+          el.className = 'step-item p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 flex flex-col gap-1 transition-all';
+          if (badge) badge.className = 'step-badge w-2 h-2 rounded-full bg-emerald-400';
+        } else if (key === stage) {
+          // Current active stage
+          el.className = 'step-item p-3 rounded-lg border border-indigo-500/50 bg-indigo-500/10 flex flex-col gap-1 ring-1 ring-indigo-500/40 transition-all';
+          if (badge) badge.className = 'step-badge w-2 h-2 rounded-full bg-indigo-400 pulse-stage';
+        } else {
+          // Pending future stage
+          el.className = 'step-item p-3 rounded-lg border border-zinc-800 bg-zinc-950/60 flex flex-col gap-1 opacity-50 transition-all';
+          if (badge) badge.className = 'step-badge w-2 h-2 rounded-full bg-zinc-700';
+        }
+      });
+    }
+
+    // Telemetry & System Status Poller
+    async function fetchSystemState() {
+      try {
+        const res = await fetch('/api/system');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Worker Status Pill
+        const statusBadge = document.getElementById('system-status-badge');
+        const statusDot = document.getElementById('system-status-dot');
+        const statusText = document.getElementById('system-status-text');
+        const isBusy = data.is_running || data.running_job !== null;
+
+        if (isBusy) {
+          statusBadge.className = 'flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20';
+          statusDot.className = 'w-2 h-2 rounded-full bg-indigo-400 pulse-stage';
+          statusText.textContent = `RUNNING (PID ${data.active_pid || '--'})`;
+        } else {
+          statusBadge.className = 'flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-zinc-900 text-emerald-400 border border-zinc-800';
+          statusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot-emerald';
+          statusText.textContent = 'NODE IDLE';
+        }
+
+        // 2. Telemetry badges
+        document.getElementById('vram-val').textContent = `${data.free_vram_mb || 0} MB`;
+        document.getElementById('quota-val').textContent = `${data.quota?.available ?? '--'}/10000`;
+
+        const cbEl = document.getElementById('breaker-val');
+        if (data.circuit_breaker?.is_open) {
+          cbEl.textContent = 'TRIPPED';
+          cbEl.className = 'font-bold text-red-400';
+        } else {
+          cbEl.textContent = 'CLOSED';
+          cbEl.className = 'font-bold text-emerald-400';
+        }
+
+        // 3. Update Stepper with active running job
+        updateStepperUI(data.running_job);
+
+      } catch (err) {
+        console.error('fetchSystemState error:', err);
+      }
+    }
+
+    // Live Log Stream Poller
+    async function fetchLogs() {
+      try {
+        const res = await fetch('/api/logs?lines=75');
+        if (!res.ok) return;
+        const data = await res.json();
+        const rawLines = data.logs || [];
+        const fullText = rawLines.join('\n');
+
+        if (fullText !== lastLogText) {
+          lastLogText = fullText;
+          const streamEl = document.getElementById('terminal-stream');
+
+          // Highlight strictly formatted lines
+          const formatted = rawLines.map(line => {
+            // Check for [YYYY-MM-DD HH:MM:SS] [AGENT/WORKER] Message
+            const match = line.match(/^(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\])\s+(\[[^\]]+\])(.*)$/);
+            if (match) {
+              const ts = `<span class="text-zinc-500">${match[1]}</span>`;
+              let agentColor = 'text-indigo-400';
+              if (match[2].includes('ERROR') || match[2].includes('FAILED')) agentColor = 'text-red-400';
+              else if (match[2].includes('SUCCESS') || match[2].includes('COMPLETED')) agentColor = 'text-emerald-400';
+              else if (match[2].includes('REVIEW')) agentColor = 'text-amber-400';
+              const agent = `<span class="${agentColor} font-bold">${match[2]}</span>`;
+              return `${ts} ${agent} ${escapeHtml(match[3])}`;
+            }
+            return escapeHtml(line);
+          }).join('\n');
+
+          streamEl.innerHTML = formatted;
+          document.getElementById('log-line-count').textContent = `${rawLines.length} lines`;
+
+          if (autoScrollEnabled) {
+            streamEl.scrollTop = streamEl.scrollHeight;
+          }
+        }
+      } catch (err) {
+        console.error('fetchLogs error:', err);
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function clearTerminal() {
+      document.getElementById('terminal-stream').innerHTML = '<span class="text-zinc-600 italic">Terminal cleared.</span>';
+      lastLogText = '';
+    }
+
+    // Queue Table Renderer
+    async function refreshQueue() {
+      try {
+        const res = await fetch('/api/queue?limit=40');
+        if (!res.ok) return;
+        const data = await res.json();
+        const jobs = data.jobs || [];
+
+        document.getElementById('queue-total-count').textContent = `${jobs.length} jobs`;
+        const tbody = document.getElementById('queue-table-body');
+
+        if (jobs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-zinc-500 italic">Job queue is empty. Submit a concept above to begin.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = jobs.map(j => {
+          // Status Badges
+          let statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700">QUEUED</span>';
+          if (j.status === 'RUNNING') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 pulse-stage font-bold">RUNNING</span>';
+          } else if (j.status === 'PENDING_REVIEW') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">REVIEW</span>';
+          } else if (j.status === 'COMPLETED') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">DONE</span>';
+          } else if (j.status === 'FAILED' || j.status === 'CANCELLED') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-red-400 border border-red-500/30">FAILED</span>';
+          }
+
+          // Stage Pill
+          const stage = j.current_stage || j.status;
+          const relativeTime = formatRelativeTime(j.created_at);
+
+          // Actions: Trace simulation on every row + Agents Download + YouTube Link + Inspect or Watch
+          let actionHtml = `<div class="flex items-center justify-end gap-1.5 flex-wrap">
+            <button onclick="openSimulationModal('${j.id}')" title="Inspect Agentic Simulation Trace" class="px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 text-[11px] font-mono transition-all">🔍 Trace</button>
+            <a href="/api/jobs/${j.id}/simulation/download" title="Download cognitive traces and metadata for every agent behind this job" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-[11px] font-mono transition-all flex items-center gap-1">📥 Agents</a>`;
+          if (j.youtube_url) {
+            actionHtml += `<a href="${j.youtube_url}" target="_blank" rel="noopener noreferrer" title="Watch on YouTube" class="px-2 py-0.5 rounded bg-red-600/15 hover:bg-red-600/30 text-red-400 border border-red-500/30 text-[11px] font-mono transition-all inline-flex items-center gap-1">
+              <svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+              <span>YouTube</span>
+            </a>`;
+          } else {
+            actionHtml += `<button onclick="promptSetJobYouTube('${j.id}')" title="Attach genuine YouTube link" class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/80 text-[11px] font-mono transition-all inline-flex items-center gap-1">+ Link YT</button>`;
+          }
+          if (j.status === 'PENDING_REVIEW') {
+            actionHtml += `<button onclick="switchTab('review')" class="px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-[11px] font-mono transition-all">Inspect</button>`;
+          } else if (j.video_path) {
+            const fname = j.video_path.split(/[\\/]/).pop();
+            const ytParam = j.youtube_url ? `'${j.youtube_url}'` : "''";
+            actionHtml += `<button onclick="openVideoModal('${fname}', '${j.video_path}', '', ${ytParam}, '/api/jobs/${j.id}/simulation/download')" class="px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[11px] font-mono transition-all">Watch</button>`;
+          }
+          actionHtml += `</div>`;
+
+          return `
+            <tr class="hover:bg-zinc-800/30 transition-colors">
+              <td class="px-4 py-2.5 text-zinc-400">#${j.id}</td>
+              <td class="px-4 py-2.5 font-sans font-medium text-zinc-200 truncate max-w-[200px]" title="${escapeHtml(j.topic || 'Auto-Ideated')}">
+                ${escapeHtml(j.topic || 'Auto-Ideated')}
+              </td>
+              <td class="px-4 py-2.5">${statusBadge}</td>
+              <td class="px-4 py-2.5 text-[11px] text-zinc-400">${stage}</td>
+              <td class="px-4 py-2.5 text-[11px] text-zinc-500" title="${j.created_at}">${relativeTime}</td>
+              <td class="px-4 py-2.5 text-right font-sans">${actionHtml}</td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('refreshQueue error:', err);
+      }
+    }
+
+    // Submit Job Handler
+    async function handleQueueJob(e) {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('btn-queue-job');
+      const topic = document.getElementById('input-topic').value.trim();
+      const niche = document.getElementById('input-niche').value;
+      const requireApproval = document.getElementById('require-approval-toggle').checked;
+      const publishTarget = form.elements['publish_target'].value || 'youtube';
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-spin">⟳</span> Queueing...';
+
+      try {
+        const res = await fetch('/api/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: topic || null,
+            niche: niche,
+            require_approval: requireApproval,
+            publish_target: publishTarget
+          })
+        });
+
+        let data = {};
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          const rawText = await res.text();
+          data = { error: rawText.slice(0, 150) || `Server returned HTTP ${res.status}` };
+        }
+
+        if (res.ok) {
+          showToast(`Job #${data.job_id} queued successfully!`, 'success');
+          document.getElementById('input-topic').value = '';
+          refreshQueue();
+          fetchSystemState();
+        } else {
+          showToast(data.error || 'Failed to queue job', 'error');
+        }
+      } catch (err) {
+        showToast(`Request failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg><span>Queue Job</span>';
+      }
+    }
+
+    // REVIEW TAB LOGIC (Human-in-the-Loop)
+    async function loadPendingReviews() {
+      const container = document.getElementById('review-items-container');
+      const badge = document.getElementById('review-counter-badge');
+
+      try {
+        const res = await fetch('/api/review');
+        if (!res.ok) return;
+        const data = await res.json();
+        const jobs = data.jobs || [];
+
+        if (jobs.length > 0) {
+          badge.textContent = jobs.length;
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+
+        if (jobs.length === 0) {
+          container.innerHTML = `
+            <div class="p-12 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+              <svg class="w-8 h-8 text-zinc-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              No scripts currently awaiting review. Queue a video with "Require Script Approval" to inspect it here.
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = jobs.map(j => {
+          let prettyJson = '{}';
+          try {
+            prettyJson = JSON.stringify(JSON.parse(j.script_json || '{}'), null, 2);
+          } catch (e) {
+            prettyJson = j.script_json || '{}';
+          }
+
+          return `
+            <div class="border border-zinc-800 rounded-xl bg-zinc-950 p-5 space-y-4">
+              <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-3">
+                <div>
+                  <span class="text-xs font-mono font-bold text-amber-400">PENDING REVIEW — JOB #${j.id}</span>
+                  <h3 class="text-sm font-bold text-zinc-100 font-sans mt-0.5">${escapeHtml(j.topic || 'Auto-Ideated Concept')}</h3>
+                  <span class="text-[11px] text-zinc-500 font-mono">Niche: ${j.niche} | Queued: ${formatRelativeTime(j.created_at)}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button onclick="approveJob(${j.id})" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold font-sans shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>Approve & Resume</span>
+                  </button>
+                  <button onclick="rejectJob(${j.id})" class="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-red-950 hover:text-red-400 text-zinc-400 text-xs font-mono transition-all">
+                    Reject
+                  </button>
+                </div>
+              </div>
+
+              <!-- Editable JSON Script Area -->
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between text-[11px] font-mono text-zinc-400">
+                  <span>Script JSON Structure (Editable)</span>
+                  <span class="text-zinc-600">Valid JSON required</span>
+                </div>
+                <textarea 
+                  id="script-editor-${j.id}" 
+                  class="w-full h-80 bg-black border border-zinc-800 rounded-lg p-3.5 font-mono text-xs text-zinc-200 leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:outline-none custom-scroll"
+                >${escapeHtml(prettyJson)}</textarea>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('loadPendingReviews error:', err);
+      }
+    }
+
+    // Approve Job
+    async function approveJob(jobId) {
+      const textarea = document.getElementById(`script-editor-${jobId}`);
+      let scriptJson = null;
+      if (textarea) {
+        try {
+          // Validate JSON syntax
+          const parsed = JSON.parse(textarea.value);
+          scriptJson = JSON.stringify(parsed);
+        } catch (e) {
+          showToast(`Invalid JSON in script: ${e.message}`, 'error');
+          return;
+        }
+      }
+
+      try {
+        const res = await fetch(`/api/jobs/${jobId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script_json: scriptJson })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`Job #${jobId} approved! Resuming video render...`, 'success');
+          loadPendingReviews();
+          refreshQueue();
+          fetchSystemState();
+        } else {
+          showToast(data.error || 'Approval failed', 'error');
+        }
+      } catch (err) {
+        showToast(`Request failed: ${err.message}`, 'error');
+      }
+    }
+
+    // Reject Job
+    async function rejectJob(jobId) {
+      if (!confirm(`Are you sure you want to reject and cancel Job #${jobId}?`)) return;
+      try {
+        const res = await fetch(`/api/jobs/${jobId}/reject`, { method: 'POST' });
+        if (res.ok) {
+          showToast(`Job #${jobId} rejected.`, 'info');
+          loadPendingReviews();
+          refreshQueue();
+        }
+      } catch (err) {
+        showToast(`Reject failed: ${err.message}`, 'error');
+      }
+    }
+
+    // ==============================================================================
+    // MISSION M: AGENTIC SIMULATION TELEMETRY & SEGREGATED ASSET VAULT
+    // ==============================================================================
+
+    // Global Asset & Simulation State
+    let allFinalArtifacts = [];
+    let allRawMaterials = [];
+    let currentGallerySubTab = 'final';
+    let currentRawCategory = 'all';
+    let gallerySearchTerm = '';
+    let activeSimulationTrace = [];
+
+    // AGENT ICON MAPPER
+    const AGENT_ICON_MAP = {
+      'Strategist': '🧭',
+      'CreativeDirector': '💡',
+      'Copywriter': '✍️',
+      'VoiceActor': '🎙️',
+      'ArtDirector': '🎨',
+      'Editor': '🎬',
+      'ComplianceOfficer': '🛡️',
+      'Publisher': '🚀'
+    };
+
+    // 1. SIMULATION INSPECTOR MODAL LOGIC
+    async function openSimulationModal(jobId) {
+      const modal = document.getElementById('simulation-modal');
+      const badge = document.getElementById('sim-modal-job-badge');
+      const title = document.getElementById('sim-modal-title');
+      const topic = document.getElementById('sim-modal-topic');
+      const statusBadge = document.getElementById('sim-modal-status-badge');
+      const nodeGraph = document.getElementById('sim-node-graph');
+      const stepCount = document.getElementById('sim-step-count');
+      const accordion = document.getElementById('sim-accordion-container');
+      const totalDur = document.getElementById('sim-total-duration');
+      const ytLink = document.getElementById('sim-modal-youtube-link');
+      const headerDl = document.getElementById('sim-modal-download-btn');
+      const footerDl = document.getElementById('sim-modal-footer-download');
+
+      badge.textContent = `Job #${jobId}`;
+      title.textContent = `Simulation Inspector — Job #${jobId}`;
+      topic.textContent = 'Fetching step execution trace...';
+      nodeGraph.innerHTML = '<span class="text-xs font-mono text-zinc-500 italic p-2">Loading pipeline trace...</span>';
+      accordion.innerHTML = '<div class="p-8 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">Loading simulation telemetry...</div>';
+      
+      const downloadUrl = `/api/jobs/${jobId}/simulation/download`;
+      if (headerDl) headerDl.href = downloadUrl;
+      if (footerDl) footerDl.href = downloadUrl;
+      const simLinkBtn = document.getElementById('sim-modal-link-yt');
+      if (ytLink) {
+        ytLink.classList.add('hidden');
+        ytLink.classList.remove('flex');
+      }
+      if (simLinkBtn) {
+        simLinkBtn.classList.add('hidden');
+        simLinkBtn.classList.remove('flex');
+      }
+
+      modal.classList.remove('hidden');
+
+      try {
+        window.currentSimJobId = jobId;
+        const res = await fetch(`/api/jobs/${jobId}/simulation`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const trace = data.trace || [];
+        activeSimulationTrace = trace;
+
+        topic.textContent = data.topic ? `"${data.topic}"` : 'Autonomous Video Pipeline Run';
+        stepCount.textContent = `${trace.length} step${trace.length === 1 ? '' : 's'} recorded`;
+
+        // Configure YouTube button if video was published
+        if (data.youtube_url) {
+          if (ytLink) {
+            ytLink.href = data.youtube_url;
+            ytLink.classList.remove('hidden');
+            ytLink.classList.add('flex');
+          }
+          if (simLinkBtn) {
+            simLinkBtn.classList.add('hidden');
+            simLinkBtn.classList.remove('flex');
+          }
+        } else {
+          if (ytLink) {
+            ytLink.classList.add('hidden');
+            ytLink.classList.remove('flex');
+          }
+          if (simLinkBtn) {
+            simLinkBtn.classList.remove('hidden');
+            simLinkBtn.classList.add('flex');
+          }
+        }
+
+        const jobStatus = data.status || 'COMPLETED';
+        statusBadge.textContent = jobStatus;
+        if (jobStatus === 'COMPLETED') {
+          statusBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold';
+        } else if (jobStatus === 'FAILED') {
+          statusBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-bold';
+        } else if (jobStatus === 'PENDING_REVIEW') {
+          statusBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold';
+        } else {
+          statusBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold';
+        }
+
+        // Calculate total execution duration
+        let totalSeconds = 0;
+        trace.forEach(s => {
+          totalSeconds += (s.duration_seconds || 0);
+        });
+        totalDur.textContent = `Total Execution Time: ${totalSeconds.toFixed(2)}s`;
+
+        renderSimulationPipeline(trace);
+        renderSimulationAccordion(trace);
+
+      } catch (err) {
+        topic.textContent = `Error loading trace: ${err.message}`;
+        nodeGraph.innerHTML = '<span class="text-xs font-mono text-red-400 p-2">Failed to load pipeline trace.</span>';
+        accordion.innerHTML = `<div class="p-8 text-center text-red-400 font-mono text-xs border border-dashed border-red-900/50 rounded-xl">Error: ${err.message}</div>`;
+      }
+    }
+
+    function closeSimulationModal() {
+      const modal = document.getElementById('simulation-modal');
+      modal.classList.add('hidden');
+    }
+
+    // Render Visual Node Graph (Top Pipeline Flow)
+    function renderSimulationPipeline(trace) {
+      const container = document.getElementById('sim-node-graph');
+      if (!trace || trace.length === 0) {
+        container.innerHTML = '<span class="text-xs font-mono text-zinc-500 italic p-2">No steps recorded for this job.</span>';
+        return;
+      }
+
+      container.innerHTML = trace.map((step, idx) => {
+        const icon = AGENT_ICON_MAP[step.agent_name] || '⚡';
+        const isLast = idx === trace.length - 1;
+        const dur = (step.duration_seconds || 0).toFixed(2);
+
+        let statusColor = 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300';
+        let dotColor = 'bg-emerald-400';
+        if (step.status === 'FAILED') {
+          statusColor = 'border-red-500/30 bg-red-500/5 text-red-300';
+          dotColor = 'bg-red-400';
+        } else if (step.status === 'REVIEW') {
+          statusColor = 'border-amber-500/30 bg-amber-500/5 text-amber-300';
+          dotColor = 'bg-amber-400';
+        }
+
+        const arrowHtml = !isLast ? `
+          <div class="flex items-center text-zinc-600 px-1 select-none">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+          </div>
+        ` : '';
+
+        return `
+          <div class="flex items-center gap-2 shrink-0">
+            <button 
+              onclick="scrollToSimStep(${idx})"
+              title="Click to view Step #${idx + 1} (${step.agent_name})"
+              class="border ${statusColor} hover:border-indigo-500 rounded-xl px-3 py-2 flex items-center gap-2.5 transition-all text-left group cursor-pointer shadow-sm hover:scale-[1.02]"
+            >
+              <div class="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-sm shadow-inner group-hover:border-indigo-500/50">
+                ${icon}
+              </div>
+              <div class="space-y-0.5">
+                <div class="flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full ${dotColor}"></span>
+                  <span class="text-xs font-bold font-sans text-zinc-200 group-hover:text-white">${step.agent_name}</span>
+                </div>
+                <div class="flex items-center gap-1 text-[10px] font-mono text-zinc-500">
+                  <span>${dur}s</span>
+                  <span>•</span>
+                  <span class="uppercase">${step.stage || 'STAGE'}</span>
+                </div>
+              </div>
+            </button>
+            ${arrowHtml}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Render Step-by-Step Accordion
+    function renderSimulationAccordion(trace) {
+      const container = document.getElementById('sim-accordion-container');
+      if (!trace || trace.length === 0) {
+        container.innerHTML = '<div class="p-8 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">No detailed telemetry trace available.</div>';
+        return;
+      }
+
+      container.innerHTML = trace.map((step, idx) => {
+        const icon = AGENT_ICON_MAP[step.agent_name] || '⚡';
+        const dur = (step.duration_seconds || 0).toFixed(2);
+        const isOpen = idx === 0 || idx === 1; // Open first 2 steps by default
+
+        let statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold font-mono">PASSED</span>';
+        if (step.status === 'FAILED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-bold font-mono">FAILED</span>';
+        } else if (step.status === 'REVIEW') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold font-mono">REVIEW</span>';
+        }
+
+        let inputJson = '{}';
+        try {
+          inputJson = JSON.stringify(step.input_payload || {}, null, 2);
+        } catch (e) {
+          inputJson = String(step.input_payload || '{}');
+        }
+
+        let outputJson = '{}';
+        try {
+          outputJson = JSON.stringify(step.structured_output || {}, null, 2);
+        } catch (e) {
+          outputJson = String(step.structured_output || '{}');
+        }
+
+        return `
+          <div id="sim-step-${idx}" class="border border-zinc-800/90 rounded-xl bg-zinc-950/80 overflow-hidden transition-all shadow-sm">
+            
+            <!-- Accordion Header -->
+            <div 
+              onclick="toggleSimStep(${idx})"
+              class="px-4 py-3 bg-zinc-900/60 hover:bg-zinc-900 border-b border-zinc-800/60 flex items-center justify-between cursor-pointer select-none transition-colors"
+            >
+              <div class="flex items-center gap-3">
+                <span class="text-base">${icon}</span>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-mono text-zinc-500 font-semibold uppercase">Step 0${idx + 1}</span>
+                    <span class="text-xs font-bold text-zinc-200">${step.agent_name}</span>
+                    <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">${step.stage || 'STAGE'}</span>
+                  </div>
+                  <div class="text-[10px] font-mono text-zinc-500 mt-0.5">
+                    Executed in ${dur}s • ${step.timestamp || 'N/A'}
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-3">
+                ${statusBadge}
+                <svg id="sim-caret-${idx}" class="w-4 h-4 text-zinc-500 transform transition-transform ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </div>
+            </div>
+
+            <!-- Accordion Content Body -->
+            <div id="sim-body-${idx}" class="${isOpen ? '' : 'hidden'} p-4 space-y-4 border-t border-zinc-900 bg-zinc-950/40 font-mono text-xs">
+              
+              <!-- 1. LLM Reasoning / Cognitive Trace -->
+              <div class="space-y-1.5">
+                <div class="flex items-center gap-2 text-[11px] font-semibold text-purple-400 uppercase tracking-wider">
+                  <span>🧠 Cognitive Reasoning Trace</span>
+                  <span class="text-zinc-600 font-normal">Internal LLM Deliberation</span>
+                </div>
+                <div class="bg-purple-950/15 border-l-2 border-purple-500 rounded-r-lg p-3.5 text-purple-200 text-xs leading-relaxed whitespace-pre-wrap select-text">
+                  ${escapeHtml(step.reasoning_trace || 'No explicit reasoning trace recorded for this step.')}
+                </div>
+              </div>
+
+              <!-- 2. Prompt Template Used -->
+              ${step.prompt_template ? `
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    <span>📝 Injected Prompt Template</span>
+                    <span class="text-zinc-600 font-normal">Pre-inference prompt</span>
+                  </div>
+                  <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-zinc-400 text-xs leading-relaxed whitespace-pre-wrap select-text max-h-40 overflow-y-auto custom-scroll">
+                    ${escapeHtml(step.prompt_template)}
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- 3. Dual Columns: Input Payload vs Structured Output Object -->
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
+                
+                <!-- Input Payload -->
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px] font-semibold text-indigo-400 uppercase tracking-wider">
+                    <span>📥 Input Payload</span>
+                    <span class="text-zinc-600 font-normal">Parameters</span>
+                  </div>
+                  <pre class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-indigo-300 text-[11px] leading-relaxed overflow-x-auto max-h-56 custom-scroll select-text">${escapeHtml(inputJson)}</pre>
+                </div>
+
+                <!-- Structured Output -->
+                <div class="space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
+                    <span>📦 Structured Output Object</span>
+                    <span class="text-zinc-600 font-normal">Verified JSON</span>
+                  </div>
+                  <pre class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-emerald-300 text-[11px] leading-relaxed overflow-x-auto max-h-56 custom-scroll select-text">${escapeHtml(outputJson)}</pre>
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+        `;
+      }).join('');
+    }
+
+    function toggleSimStep(idx) {
+      const body = document.getElementById(`sim-body-${idx}`);
+      const caret = document.getElementById(`sim-caret-${idx}`);
+      if (!body) return;
+      const isHidden = body.classList.contains('hidden');
+      if (isHidden) {
+        body.classList.remove('hidden');
+        if (caret) caret.classList.add('rotate-180');
+      } else {
+        body.classList.add('hidden');
+        if (caret) caret.classList.remove('rotate-180');
+      }
+    }
+
+    function expandAllSimSteps() {
+      if (!activeSimulationTrace) return;
+      activeSimulationTrace.forEach((_, idx) => {
+        const body = document.getElementById(`sim-body-${idx}`);
+        const caret = document.getElementById(`sim-caret-${idx}`);
+        if (body) body.classList.remove('hidden');
+        if (caret) caret.classList.add('rotate-180');
+      });
+    }
+
+    function collapseAllSimSteps() {
+      if (!activeSimulationTrace) return;
+      activeSimulationTrace.forEach((_, idx) => {
+        const body = document.getElementById(`sim-body-${idx}`);
+        const caret = document.getElementById(`sim-caret-${idx}`);
+        if (body) body.classList.add('hidden');
+        if (caret) caret.classList.remove('rotate-180');
+      });
+    }
+
+    function scrollToSimStep(idx) {
+      const el = document.getElementById(`sim-step-${idx}`);
+      const body = document.getElementById(`sim-body-${idx}`);
+      const caret = document.getElementById(`sim-caret-${idx}`);
+      if (body) body.classList.remove('hidden');
+      if (caret) caret.classList.add('rotate-180');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+
+    // ==============================================================================
+    // 2. SEGREGATED ASSET VAULT LOGIC (MISSION M)
+    // ==============================================================================
+
+    async function loadCategorizedAssets() {
+      try {
+        const res = await fetch('/api/assets');
+        if (!res.ok) return;
+        const data = await res.json();
+        allFinalArtifacts = data.final_artifacts || [];
+        allRawMaterials = data.raw_materials || [];
+
+        document.getElementById('gallery-final-count').textContent = data.final_count || allFinalArtifacts.length;
+        document.getElementById('gallery-raw-count').textContent = data.raw_count || allRawMaterials.length;
+
+        renderFinalArtifacts();
+        renderRawMaterials();
+      } catch (err) {
+        console.error('loadCategorizedAssets error:', err);
+      }
+    }
+
+    // Sub-tab switcher: 'final' vs 'raw'
+    function switchGallerySubTab(tab) {
+      currentGallerySubTab = tab;
+      const btnFinal = document.getElementById('gallery-subtab-final');
+      const btnRaw = document.getElementById('gallery-subtab-raw');
+      const containerFinal = document.getElementById('gallery-final-container');
+      const containerRaw = document.getElementById('gallery-raw-container');
+      const filterChips = document.getElementById('raw-filter-chips');
+
+      if (tab === 'final') {
+        btnFinal.className = 'px-3.5 py-1.5 rounded-lg bg-zinc-800 text-white shadow-sm transition-all flex items-center gap-2';
+        btnRaw.className = 'px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-2';
+        containerFinal.classList.remove('hidden');
+        containerRaw.classList.add('hidden');
+        filterChips.classList.add('hidden');
+      } else {
+        btnRaw.className = 'px-3.5 py-1.5 rounded-lg bg-zinc-800 text-white shadow-sm transition-all flex items-center gap-2';
+        btnFinal.className = 'px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all flex items-center gap-2';
+        containerRaw.classList.remove('hidden');
+        containerFinal.classList.add('hidden');
+        filterChips.classList.remove('hidden');
+      }
+    }
+
+    // Filter Raw Materials by Category
+    function filterRawCategory(cat) {
+      currentRawCategory = cat;
+      document.querySelectorAll('.raw-chip').forEach(chip => {
+        chip.className = 'raw-chip px-2.5 py-1 rounded-md bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800';
+      });
+      event.target.className = 'raw-chip px-2.5 py-1 rounded-md bg-zinc-800 text-white font-medium';
+      renderRawMaterials();
+    }
+
+    // Search Assets Filter
+    function handleGallerySearch(query) {
+      gallerySearchTerm = (query || '').toLowerCase().trim();
+      renderFinalArtifacts();
+      renderRawMaterials();
+    }
+
+    // Render Final Deliverables (Strictly pipeline/output)
+    function renderFinalArtifacts() {
+      const videoGrid = document.getElementById('gallery-final-grid');
+      const auxGrid = document.getElementById('gallery-final-aux-grid');
+      const auxSection = document.getElementById('gallery-final-aux-section');
+
+      let filtered = allFinalArtifacts;
+      if (gallerySearchTerm) {
+        filtered = filtered.filter(item => 
+          item.name.toLowerCase().includes(gallerySearchTerm) ||
+          (item.category && item.category.toLowerCase().includes(gallerySearchTerm))
+        );
+      }
+
+      const videoItems = filtered.filter(item => item.type === 'video');
+      const auxItems = filtered.filter(item => item.type !== 'video');
+
+      // 1. Render Video Deliverables (9:16 Vertical Cards)
+      if (videoItems.length === 0) {
+        videoGrid.innerHTML = `
+          <div class="col-span-full p-12 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+            No pristine final videos matching the filter in pipeline/output.
+          </div>
+        `;
+      } else {
+        videoGrid.innerHTML = videoItems.map(v => {
+          const thumbUrl = v.thumbnail_url || (`/thumbnails/${v.name.replace(/\.[^/.]+$/, '')}.jpg`);
+          const simDownloadUrl = v.simulation_download_url || (`/api/videos/${encodeURIComponent(v.name)}/simulation/download`);
+          
+          let ytBadge = '';
+          let ytActionBtn = '';
+          if (v.youtube_url) {
+            ytBadge = `
+              <a href="${v.youtube_url}" target="_blank" rel="noopener noreferrer" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-red-600 text-white shadow-md flex items-center gap-1 hover:bg-red-500" onclick="event.stopPropagation()" title="Watch on YouTube">
+                <svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                <span>YouTube</span>
+              </a>
+            `;
+            ytActionBtn = `
+              <a href="${v.youtube_url}" target="_blank" rel="noopener noreferrer" class="text-red-400 hover:text-red-300 font-semibold text-[11px] font-mono flex items-center gap-1" title="Watch on YouTube">
+                <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                <span>YouTube</span>
+              </a>
+            `;
+          } else {
+            ytActionBtn = `
+              <button onclick="event.stopPropagation(); promptSetVideoYouTube('${escapeHtml(v.name)}')" class="text-zinc-500 hover:text-zinc-300 font-semibold text-[11px] font-mono flex items-center gap-1 hover:underline" title="Attach genuine YouTube link">
+                <span>+ Link YT</span>
+              </button>
+            `;
+          }
+
+          return `
+          <div class="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden hover:border-emerald-500/50 transition-all flex flex-col group shadow-sm ring-1 ring-emerald-500/10">
+            <div class="relative aspect-[9/16] bg-zinc-900 flex items-center justify-center overflow-hidden cursor-pointer" onclick="openVideoModal('${escapeHtml(v.name)}', '${v.url}', '${v.size_mb}', '${v.youtube_url || ''}', '${simDownloadUrl}')">
+              <img src="${thumbUrl}" 
+                   alt="${escapeHtml(v.name)}" 
+                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                   loading="lazy"
+                   onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';" />
+              <video preload="none" class="w-full h-full object-cover opacity-85 group-hover:opacity-100 transition-opacity" style="display:none;">
+                <source src="${v.url}" type="video/mp4">
+              </video>
+              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 group-hover:from-black/60 transition-colors"></div>
+              <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <div class="w-12 h-12 rounded-full bg-emerald-600/90 text-white flex items-center justify-center shadow-lg transform group-hover:scale-110 transition-transform">
+                  <svg class="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </div>
+              </div>
+              <div class="absolute top-2 left-2 flex items-center gap-1.5 flex-wrap">
+                <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-black shadow-md">FINAL MASTER</span>
+                ${ytBadge}
+              </div>
+              <span class="absolute top-2 right-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/80 text-zinc-300 border border-zinc-700">9:16 HD</span>
+            </div>
+
+            <div class="p-3 flex-1 flex flex-col justify-between space-y-2">
+              <div>
+                <h4 class="text-xs font-bold text-zinc-200 truncate font-sans" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</h4>
+                <div class="text-[10px] font-mono text-zinc-500 mt-0.5">${v.size_mb} MB • ${v.modified}</div>
+                <div class="mt-1 flex items-center gap-1 flex-wrap">
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">30fps CFR</span>
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-900">Hard-Burned Captions</span>
+                </div>
+              </div>
+
+              <div class="pt-2 border-t border-zinc-850 flex items-center justify-between text-xs flex-wrap gap-1">
+                <div class="flex items-center gap-2">
+                  <button onclick="openVideoModal('${escapeHtml(v.name)}', '${v.url}', '${v.size_mb}', '${v.youtube_url || ''}', '${simDownloadUrl}')" class="text-emerald-400 hover:text-emerald-300 font-semibold text-[11px] flex items-center gap-1">
+                    <span>▶ Play</span>
+                  </button>
+                  ${ytActionBtn}
+                </div>
+                <div class="flex items-center gap-2">
+                  <a href="${simDownloadUrl}" class="text-zinc-400 hover:text-zinc-200 text-[10px] font-mono bg-zinc-900 hover:bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-700 transition-all flex items-center gap-1" title="Download cognitive traces & inputs of every agent behind this video">📥 Agent Info</a>
+                  <a href="${v.url}" download class="text-zinc-500 hover:text-zinc-300 text-[11px] font-mono">MP4</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+        }).join('');
+      }
+
+      // 2. Render Auxiliary Deliverables (ASS captions & Release JSON)
+      if (auxItems.length === 0) {
+        auxSection.classList.add('hidden');
+      } else {
+        auxSection.classList.remove('hidden');
+        auxGrid.innerHTML = auxItems.map(item => {
+          const isSubtitle = item.type === 'subtitles';
+          const icon = isSubtitle ? '💬' : '📋';
+          return `
+            <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2.5 overflow-hidden">
+                <span class="text-base">${icon}</span>
+                <div class="overflow-hidden">
+                  <div class="text-xs font-mono font-bold text-zinc-200 truncate" title="${item.name}">${item.name}</div>
+                  <div class="text-[10px] font-mono text-zinc-500">${item.size_mb} MB • ${item.category}</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button onclick="fetchTextAndOpenModal('${item.name}', '${item.url}')" class="text-[11px] font-mono text-indigo-400 hover:underline">Inspect</button>
+                <a href="${item.url}" download class="text-[11px] font-mono text-zinc-500 hover:text-zinc-300">Download</a>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    // Render Raw Materials (Intermediate components strictly from pipeline/assets_cache)
+    function renderRawMaterials() {
+      const grid = document.getElementById('gallery-raw-grid');
+      let filtered = allRawMaterials;
+
+      // Category filter
+      if (currentRawCategory !== 'all') {
+        filtered = filtered.filter(item => {
+          const cat = (item.category || '').toLowerCase();
+          const path = (item.path || '').toLowerCase();
+          if (currentRawCategory === 'pexels') return cat.includes('pexels') || path.includes('pexels');
+          if (currentRawCategory === 'tts') return cat.includes('tts') || path.includes('tts') || item.type === 'audio';
+          if (currentRawCategory === 'comfyui') return cat.includes('comfy') || path.includes('comfy');
+          if (currentRawCategory === 'proxy') return cat.includes('proxy') || path.includes('proxy');
+          if (currentRawCategory === 'transcript') return cat.includes('transcript') || path.endsWith('.srt');
+          if (currentRawCategory === 'staging') return cat.includes('staging') || path.includes('seg') || path.includes('master_visual');
+          return true;
+        });
+      }
+
+      // Search filter
+      if (gallerySearchTerm) {
+        filtered = filtered.filter(item => 
+          item.name.toLowerCase().includes(gallerySearchTerm) ||
+          item.path.toLowerCase().includes(gallerySearchTerm) ||
+          (item.category && item.category.toLowerCase().includes(gallerySearchTerm))
+        );
+      }
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full p-12 text-center text-zinc-500 font-mono text-xs border border-dashed border-zinc-800 rounded-xl">
+            No intermediate raw materials match the selected filter.
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = filtered.slice(0, 60).map(item => {
+        let previewBlock = '';
+        let actionBtn = '';
+
+        if (item.type === 'audio') {
+          // Audio WAV card with inline player
+          previewBlock = `
+            <div class="p-3 bg-zinc-900 border-b border-zinc-800/80 flex flex-col justify-center">
+              <div class="flex items-center justify-between text-[10px] font-mono text-zinc-400 mb-1">
+                <span>🎙️ Raw Audio Chunk</span>
+                <span>WAV Mono</span>
+              </div>
+              <audio controls class="w-full h-7 rounded bg-black">
+                <source src="${item.url}" type="audio/wav">
+              </audio>
+            </div>
+          `;
+          actionBtn = `<a href="${item.url}" download class="text-zinc-400 hover:text-zinc-200 text-[11px] font-mono">Download WAV</a>`;
+        } else if (item.type === 'video') {
+          // Video proxy / stock clip card
+          const thumbUrl = item.thumbnail_url || (`/thumbnails/${item.name.replace(/\.[^/.]+$/, '')}.jpg`);
+          previewBlock = `
+            <div class="relative aspect-video bg-zinc-900 flex items-center justify-center overflow-hidden cursor-pointer" onclick="openVideoModal('${escapeHtml(item.name)}', '${item.url}', '${item.size_mb}')">
+              <img src="${thumbUrl}" 
+                   alt="${escapeHtml(item.name)}" 
+                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                   loading="lazy"
+                   onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';" />
+              <video preload="none" class="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" style="display:none;">
+                <source src="${item.url}" type="video/mp4">
+              </video>
+              <div class="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <div class="w-9 h-9 rounded-full bg-zinc-900/90 border border-zinc-700 text-white flex items-center justify-center shadow">
+                  <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </div>
+              </div>
+            </div>
+          `;
+          actionBtn = `<button onclick="openVideoModal('${escapeHtml(item.name)}', '${item.url}', '${item.size_mb}')" class="text-indigo-400 hover:text-indigo-300 font-semibold text-[11px]">Play Clip</button>`;
+        } else if (item.type === 'image') {
+          // ComfyUI image frame preview
+          previewBlock = `
+            <div class="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+              <img src="${item.url}" alt="${escapeHtml(item.name)}" class="w-full h-full object-contain" loading="lazy" />
+            </div>
+          `;
+          actionBtn = `<a href="${item.url}" target="_blank" class="text-indigo-400 hover:text-indigo-300 font-semibold text-[11px]">View Frame</a>`;
+        } else {
+          // Text / Transcript card
+          previewBlock = `
+            <div class="p-4 bg-zinc-900 border-b border-zinc-800/80 flex items-center justify-center text-zinc-500">
+              <div class="text-center space-y-1">
+                <svg class="w-8 h-8 mx-auto text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-[10px] font-mono uppercase text-zinc-500">${item.format || 'Text Artifact'}</span>
+              </div>
+            </div>
+          `;
+          actionBtn = `<button onclick="fetchTextAndOpenModal('${item.name}', '${item.url}')" class="text-indigo-400 hover:text-indigo-300 font-semibold text-[11px]">Inspect Text</button>`;
+        }
+
+        return `
+          <div class="bg-zinc-950 border border-zinc-800/90 rounded-xl overflow-hidden flex flex-col justify-between group shadow-sm">
+            ${previewBlock}
+            <div class="p-3 space-y-2">
+              <div>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 truncate">${item.category}</span>
+                  <span class="text-[10px] font-mono text-zinc-500 shrink-0">${item.size_mb} MB</span>
+                </div>
+                <h4 class="text-xs font-mono text-zinc-200 truncate mt-1" title="${item.path}">${item.name}</h4>
+                <div class="text-[10px] font-mono text-zinc-500 truncate" title="${item.path}">path: ${item.path}</div>
+              </div>
+              <div class="pt-2 border-t border-zinc-900 flex items-center justify-between text-xs">
+                ${actionBtn}
+                <a href="${item.url}" download class="text-zinc-500 hover:text-zinc-300 text-[10px] font-mono">Download</a>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Text & Transcript Inspector Modal
+    async function fetchTextAndOpenModal(title, url) {
+      openTextModal(title, 'Fetching content...');
+      try {
+        const res = await fetch(url);
+        const text = await res.text();
+        openTextModal(title, text);
+      } catch (err) {
+        openTextModal(title, `Error fetching text: ${err.message}`);
+      }
+    }
+
+    function openTextModal(title, content, meta = '') {
+      const modal = document.getElementById('text-preview-modal');
+      document.getElementById('modal-text-title').textContent = title;
+      document.getElementById('modal-text-content').textContent = content;
+      document.getElementById('modal-text-meta').textContent = meta || `${content.length} characters`;
+      modal.classList.remove('hidden');
+    }
+
+    function closeTextModal() {
+      const modal = document.getElementById('text-preview-modal');
+      modal.classList.add('hidden');
+    }
+
+    function copyTextModalContent() {
+      const text = document.getElementById('modal-text-content').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied content to clipboard!', 'success');
+      }).catch(() => {
+        showToast('Failed to copy to clipboard.', 'error');
+      });
+    }
+
+    // Video Preview Modal
+    function openVideoModal(title, url, sizeMb = '', youtubeUrl = '', simDownloadUrl = '') {
+      window.currentModalVideoTitle = title;
+      const modal = document.getElementById('video-preview-modal');
+      const player = document.getElementById('modal-video-player');
+      document.getElementById('modal-video-title').textContent = title;
+      document.getElementById('modal-video-meta').textContent = sizeMb ? `${sizeMb} MB` : '';
+      document.getElementById('modal-video-download').href = url;
+
+      // YouTube Link handling
+      const ytBtn = document.getElementById('modal-video-youtube');
+      const ytLinkBtn = document.getElementById('modal-video-link-yt');
+      let resolvedYt = youtubeUrl;
+      if (!resolvedYt && window.allFinalArtifacts) {
+        const match = window.allFinalArtifacts.find(a => a.name === title || a.url === url);
+        if (match && match.youtube_url) resolvedYt = match.youtube_url;
+      }
+      if (resolvedYt) {
+        if (ytBtn) {
+          ytBtn.href = resolvedYt;
+          ytBtn.classList.remove('hidden');
+          ytBtn.classList.add('flex');
+        }
+        if (ytLinkBtn) {
+          ytLinkBtn.classList.add('hidden');
+          ytLinkBtn.classList.remove('flex');
+        }
+      } else {
+        if (ytBtn) {
+          ytBtn.classList.add('hidden');
+          ytBtn.classList.remove('flex');
+        }
+        if (ytLinkBtn) {
+          ytLinkBtn.classList.remove('hidden');
+          ytLinkBtn.classList.add('flex');
+        }
+      }
+
+      // Download Agent Info handling
+      const agentBtn = document.getElementById('modal-video-agent-info');
+      if (agentBtn) {
+        let dlUrl = simDownloadUrl;
+        if (!dlUrl) {
+          const fname = title || (url ? url.split(/[\\/]/).pop() : '');
+          dlUrl = `/api/videos/${encodeURIComponent(fname)}/simulation/download`;
+        }
+        agentBtn.href = dlUrl;
+      }
+
+      player.pause();
+      player.src = url;
+      modal.classList.remove('hidden');
+      player.load();
+      const playPromise = player.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.log("Autoplay prevented or video playback deferred:", err);
+        });
+      }
+    }
+
+    function closeVideoModal() {
+      const modal = document.getElementById('video-preview-modal');
+      const player = document.getElementById('modal-video-player');
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      modal.classList.add('hidden');
+    }
+
+    // Toast notification banner
+    function showToast(message, type = 'info') {
+      let toastContainer = document.getElementById('toast-container');
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.className = 'fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none';
+        document.body.appendChild(toastContainer);
+      }
+
+      const toast = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40',
+        error: 'bg-red-950/90 text-red-300 border-red-500/40',
+        info: 'bg-zinc-900/90 text-zinc-300 border-zinc-700/50'
+      };
+      const borderClass = colors[type] || colors.info;
+
+      toast.className = `pointer-events-auto px-4 py-2.5 rounded-lg border shadow-xl text-xs font-mono flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0 ${borderClass}`;
+      toast.textContent = message;
+
+      toastContainer.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    async function promptSetJobYouTube(jobId) {
+      const url = prompt(`Enter genuine YouTube URL for Job #${jobId} (e.g. https://youtube.com/shorts/...):`);
+      if (!url) return;
+      try {
+        const res = await fetch(`/api/jobs/${jobId}/youtube_url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ youtube_url: url.trim() })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(`Failed: ${data.error || 'Invalid YouTube URL'}`, 'error');
+          return;
+        }
+        showToast(`YouTube URL linked to Job #${jobId}!`, 'success');
+        refreshQueue();
+        if (window.currentSimJobId == jobId) {
+          openSimulationModal(jobId);
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+      }
+    }
+
+    async function promptSetVideoYouTube(filename) {
+      const url = prompt(`Enter genuine YouTube URL for video '${filename}' (e.g. https://youtube.com/shorts/...):`);
+      if (!url) return;
+      try {
+        const res = await fetch(`/api/videos/${encodeURIComponent(filename)}/youtube_url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ youtube_url: url.trim() })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(`Failed: ${data.error || 'Invalid YouTube URL'}`, 'error');
+          return;
+        }
+        showToast(`YouTube URL linked to ${filename}!`, 'success');
+        loadCategorizedAssets();
+        refreshQueue();
+        if (window.currentModalVideoTitle === filename) {
+          const ytBtn = document.getElementById('modal-video-youtube');
+          const ytLinkBtn = document.getElementById('modal-video-link-yt');
+          if (ytBtn && data.youtube_url) {
+            ytBtn.href = data.youtube_url;
+            ytBtn.classList.remove('hidden');
+            ytBtn.classList.add('flex');
+          }
+          if (ytLinkBtn) {
+            ytLinkBtn.classList.add('hidden');
+            ytLinkBtn.classList.remove('flex');
+          }
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+      }
+    }
+
+    function promptSetCurrentModalVideoYouTube() {
+      if (window.currentModalVideoTitle) {
+        promptSetVideoYouTube(window.currentModalVideoTitle);
+      }
+    }
+
+    function promptSetCurrentSimJobYouTube() {
+      if (window.currentSimJobId) {
+        promptSetJobYouTube(window.currentSimJobId);
+      }
+    }
+
+    // Reset Quota & Breaker
+    async function resetQuota() {
+      if (!confirm("Reset today's YouTube API quota tracking?")) return;
+      try {
+        const res = await fetch('/api/quota/reset', { method: 'POST' });
+        if (res.ok) {
+          showToast('YouTube Quota tracker reset to 0.', 'success');
+          fetchSystemState();
+        }
+      } catch (err) {
+        showToast(`Reset failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function resetCircuitBreaker() {
+      if (!confirm('Re-arm circuit breaker to CLOSED state?')) return;
+      try {
+        const res = await fetch('/api/circuit-breaker/reset', { method: 'POST' });
+        if (res.ok) {
+          showToast('Circuit breaker successfully reset.', 'success');
+          fetchSystemState();
+        }
+      } catch (err) {
+        showToast(`Reset failed: ${err.message}`, 'error');
+      }
+    }
+
+    // Auto-Scroll Toggle Listener
+    document.getElementById('autoscroll-toggle').addEventListener('change', (e) => {
+      autoScrollEnabled = e.target.checked;
+    });
+
+    // Close modals on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeVideoModal();
+        closeSimulationModal();
+        closeTextModal();
+      }
+    });
+
+    // Lifecycle Initialization & Background Pollers
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchSystemState();
+      fetchLogs();
+      refreshQueue();
+      loadPendingReviews();
+      loadCategorizedAssets();
+
+      // Poll system metrics and stepper every 2 seconds
+      setInterval(fetchSystemState, 2000);
+      // Poll live log terminal every 2 seconds
+      setInterval(fetchLogs, 2000);
+      // Poll queue table every 3 seconds
+      setInterval(refreshQueue, 3000);
+      // Poll pending review count every 4 seconds
+      setInterval(loadPendingReviews, 4000);
+    });
+  </script>
+
+</body>
+</html>

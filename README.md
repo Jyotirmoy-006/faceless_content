@@ -287,12 +287,22 @@ Every rendered video conforms to Meta Reels specifications:
 
 ## Live Production Proof
 
-The pipeline has executed an autonomous end-to-end run resulting in a live, public YouTube Shorts publication:
+The pipeline has executed autonomous end-to-end runs resulting in live, public YouTube Shorts publications:
 
+### 1. Re-Uploaded Fixed Production Video (Rule 9, 10, 11 Compliant)
 - **Video Title**: *Why Your Smart Bulb Might Leak Your Passwords*
-- **Live YouTube Shorts URL**: **[https://youtube.com/shorts/ORLc4VHZARk](https://youtube.com/shorts/ORLc4VHZARk)**
-- **Video ID**: `ORLc4VHZARk`
-- **Visibility**: `public`
-- **Output File**: `pipeline/output/20260916_180043_Why_Your_Smart_Bulb_Might_Be_L.mp4` (13.82 MB)
-- **Quota Impact**: 1,600 units consumed; 8,400 units preserved in persistent state.
-- **OAuth Token**: Persisted to `youtube_token.json` for headless recurring scheduling via Windows Task Scheduler.
+- **Live YouTube Shorts URL**: **[https://youtube.com/shorts/_KESV02vwRc](https://youtube.com/shorts/_KESV02vwRc)**
+- **Video ID**: `_KESV02vwRc`
+- **Visibility**: `public` (Restricted: False)
+- **Output File**: `pipeline/output/20260916_180043_Why_Your_Smart_Bulb_Might_Be_L.mp4` (9.36 MB, 18.35s)
+- **Fixes Applied**:
+  - Pacing compressed by 30.7% (26.47s $\to$ 18.35s, over 8.1s of dead air eradicated).
+  - ZERO silence intervals $> 150$ms anywhere in the track.
+  - Dynamically styled, word-level karaoke hard-burned captions in mobile safe zone.
+  - Canonical 1080x1920 30fps CFR yuv420p bt709 compose-mode normalization.
+  - Closed-GOP NVENC encoding with faststart moov atom.
+
+### 2. Historical Baseline Upload (Pre-Fix Reference)
+- **Original URL**: [https://youtube.com/shorts/ORLc4VHZARk](https://youtube.com/shorts/ORLc4VHZARk) (Video ID: `ORLc4VHZARk`)
+- **Original File Backup**: `pipeline/output/20260916_180043_Why_Your_Smart_Bulb_Might_Be_L_original_unfixed.mp4` (13.82 MB, 26.47s)
+

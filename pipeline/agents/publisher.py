@@ -128,34 +128,31 @@ class PublisherAgent:
                 units_spent=0
             )
 
-        # 2. Perform Real or OAuth Upload
+        # 2. Perform Real or OAuth Upload with atomic quota reservation (GAP 14)
         try:
-            upload_response = self._execute_youtube_upload(
-                video_path=path,
-                title=title,
-                description=description,
-                tags=tags or ["#shorts"],
-                privacy_status=privacy_status
-            )
-            video_id = upload_response.get("id", "UNKNOWN_ID")
-            actual_privacy = upload_response.get("status", {}).get("privacyStatus", privacy_status)
-            
-            # 3. Detect & Surface Unverified Project Restriction
-            is_restricted = False
-            if privacy_status == "public" and actual_privacy.lower() in ("private", "unlisted"):
-                is_restricted = True
-                logger.warning(
-                    f"[UNVERIFIED_PROJECT_WARNING] Video '{video_id}' was forced to '{actual_privacy}' "
-                    f"instead of requested 'public'. This occurs when the Google Cloud OAuth app is in "
-                    f"'Testing' mode or unverified. The video is safely uploaded but visibility is restricted."
-                )
-
-            # 4. Record Quota Spend Immediately (Rule 3)
-            self.quota_tracker.consume(
+            with self.quota_tracker.atomic_reservation(
                 units=YOUTUBE_VIDEO_UPLOAD_COST,
-                reason="videos.insert",
-                resource_id=video_id
-            )
+                operation="videos.insert"
+            ):
+                upload_response = self._execute_youtube_upload(
+                    video_path=path,
+                    title=title,
+                    description=description,
+                    tags=tags or ["#shorts"],
+                    privacy_status=privacy_status
+                )
+                video_id = upload_response.get("id", "UNKNOWN_ID")
+                actual_privacy = upload_response.get("status", {}).get("privacyStatus", privacy_status)
+                
+                # 3. Detect & Surface Unverified Project Restriction
+                is_restricted = False
+                if privacy_status == "public" and actual_privacy.lower() in ("private", "unlisted"):
+                    is_restricted = True
+                    logger.warning(
+                        f"[UNVERIFIED_PROJECT_WARNING] Video '{video_id}' was forced to '{actual_privacy}' "
+                        f"instead of requested 'public'. This occurs when the Google Cloud OAuth app is in "
+                        f"'Testing' mode or unverified. The video is safely uploaded but visibility is restricted."
+                    )
 
             video_url = f"https://youtube.com/shorts/{video_id}"
             logger.info(f"YouTube video successfully uploaded: {video_url} (Privacy: {actual_privacy})")
@@ -358,11 +355,84 @@ class PublisherAgent:
                 )
         except Exception as e:
             logger.error(f"Instagram Reels publish failed: {e}", exc_info=True)
+            err_str = str(e)
+            is_token_issue = any(k in err_str.lower() for k in ["oauthexception", "190", "expired", "session has expired", "error validating access token", "invalid oauth"])
+            if is_token_issue:
+                try:
+                    from pipeline.core.notifier import notifier
+                    notifier.alert(
+                        f"[INSTAGRAM_TOKEN_EXPIRED] Instagram Graph API access token has expired or is invalid: {err_str}. "
+                        f"Reels publishing is halted. Please generate a new 60-day token in Meta Developer Portal.",
+                        level="ERROR",
+                        extra={"platform": "instagram", "error": err_str}
+                    )
+                except Exception:
+                    pass
             return PublishResult(
                 platform="instagram",
                 status=PublishStatus.FAILED,
                 message=f"Instagram publishing encountered an error: {str(e)}"
             )
+
+    def check_instagram_token_health(self, access_token: Optional[str] = None) -> Dict[str, Any]:
+        """Proactively checks the validity and expiration window of the configured Instagram token."""
+        token = access_token or os.getenv("IG_ACCESS_TOKEN")
+        if not token:
+            return {"valid": False, "reason": "No IG_ACCESS_TOKEN configured in environment."}
+        
+        try:
+            endpoint = "https://graph.facebook.com/v19.0/debug_token"
+            params = {"input_token": token, "access_token": token}
+            res = requests.get(endpoint, params=params, timeout=10)
+            data = res.json()
+            if res.status_code != 200 or "data" not in data:
+                me_res = requests.get("https://graph.facebook.com/v19.0/me", params={"access_token": token}, timeout=10)
+                if me_res.status_code == 200:
+                    return {"valid": True, "details": me_res.json()}
+                err_msg = me_res.json().get("error", {}).get("message", "Token invalid")
+                from pipeline.core.notifier import notifier
+                notifier.alert(
+                    f"[INSTAGRAM_TOKEN_EXPIRED] Instagram token health check failed: {err_msg}",
+                    level="ERROR",
+                    extra={"platform": "instagram", "error": err_msg}
+                )
+                return {"valid": False, "error": err_msg}
+
+            token_data = data.get("data", {})
+            is_valid = token_data.get("is_valid", False)
+            expires_at = token_data.get("data_access_expires_at") or token_data.get("expires_at")
+            
+            if not is_valid:
+                from pipeline.core.notifier import notifier
+                notifier.alert(
+                    "[INSTAGRAM_TOKEN_EXPIRED] Meta reports Instagram access token is no longer valid. Immediate manual refresh required.",
+                    level="ERROR",
+                    extra={"token_data": token_data}
+                )
+                return {"valid": False, "reason": "Token marked invalid by Meta"}
+
+            days_remaining = None
+            if expires_at and isinstance(expires_at, (int, float)) and expires_at > 0:
+                now_ts = datetime.now(timezone.utc).timestamp()
+                diff_sec = expires_at - now_ts
+                days_remaining = round(diff_sec / 86400, 1)
+                if days_remaining <= 7:
+                    from pipeline.core.notifier import notifier
+                    notifier.alert(
+                        f"[INSTAGRAM_TOKEN_EXPIRING] Instagram access token expires in {days_remaining} days. "
+                        f"Please refresh the 60-day token soon to avoid publishing interruptions.",
+                        level="WARNING",
+                        extra={"days_remaining": days_remaining}
+                    )
+            
+            return {
+                "valid": True,
+                "days_remaining": days_remaining,
+                "scopes": token_data.get("scopes", [])
+            }
+        except Exception as e:
+            logger.warning(f"Failed to check Instagram token health: {e}")
+            return {"valid": False, "error": str(e)}
 
     def _create_instagram_container(
         self,

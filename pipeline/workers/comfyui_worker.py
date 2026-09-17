@@ -24,9 +24,11 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -35,6 +37,46 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 
 from moviepy import VideoClip
+
+
+def ts() -> str:
+    """Returns current timestamp formatted as YYYY-MM-DD HH:MM:SS.mmm."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def check_free_vram_mb() -> int:
+    """Queries current free VRAM in MiB using nvidia-smi."""
+    try:
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, check=True, timeout=5.0
+        )
+        return int(res.stdout.strip().split("\n")[0])
+    except Exception as e:
+        print(f"[{ts()}] [COMFYUI_WORKER] Warning: failed to query nvidia-smi ({e}), assuming 4096 MB", file=sys.stderr)
+        return 4096
+
+
+def preflight_vram_check(min_free_mb: int = 1024, max_attempts: int = 5, backoff_seconds: float = 2.0) -> int:
+    """Preflight check: verifies sufficient free VRAM exists before starting SD1.5 generation.
+    If below safety threshold, retries with backoff. Raises RuntimeError if still insufficient.
+    """
+    for attempt in range(1, max_attempts + 1):
+        free_mb = check_free_vram_mb()
+        if free_mb >= min_free_mb:
+            print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: PREFLIGHT_VRAM_OK] Free VRAM: {free_mb} MB (threshold: {min_free_mb} MB)")
+            return free_mb
+        print(
+            f"[{ts()}] [COMFYUI_WORKER] [STAGE: PREFLIGHT_VRAM_LOW] Free VRAM ({free_mb} MB) below safety threshold ({min_free_mb} MB). "
+            f"Attempt {attempt}/{max_attempts}. Backing off for {backoff_seconds:.1f}s...",
+            file=sys.stderr
+        )
+        time.sleep(backoff_seconds)
+        backoff_seconds *= 1.5
+
+    raise RuntimeError(
+        f"Preflight VRAM check failed: Free VRAM ({check_free_vram_mb()} MB) is below {min_free_mb} MB after {max_attempts} attempts."
+    )
 
 
 def generate_mock_image(prompt: str, width: int = 512, height: int = 512) -> Image.Image:
@@ -213,13 +255,6 @@ def call_comfyui_api(
     img_resp = requests.get(f"{view_endpoint}?{params}", timeout=15.0)
     img_resp.raise_for_status()
 
-    # 4. Client-side memory purge (/free) to prevent VRAM accumulation
-    try:
-        requests.post(free_endpoint, json={"unload_models": True, "free_memory": True}, timeout=5.0)
-        print("[COMFYUI_WORKER] Triggered ComfyUI /free endpoint to purge VRAM.")
-    except Exception as free_err:
-        print(f"[COMFYUI_WORKER] Warning: /free request failed: {free_err}", file=sys.stderr)
-
     import io
     return Image.open(io.BytesIO(img_resp.content)).convert("RGB")
 
@@ -229,16 +264,24 @@ def apply_ken_burns_effect(
     duration: float = 4.0,
     fps: int = 30,
     zoom_factor: float = 1.15,
-    out_size: Tuple[int, int] = (512, 512)
+    out_size: Tuple[int, int] = (1080, 1920)
 ) -> VideoClip:
-    """Applies a smooth Ken Burns pan/zoom animation to a PIL image using MoviePy."""
+    """Applies a smooth Ken Burns pan/zoom animation to a PIL image using MoviePy.
+
+    Rule 9 Compliance:
+    - Normalizes to canonical 1080x1920 (9:16) resolution with proper center-scale+crop (never stretch).
+    - Uses Lanczos interpolation for initial high-resolution canvas scaling.
+    - Uses continuous subpixel floating-point coordinates and Bicubic resampling
+      to avoid visible stepping or jitter across frames.
+    """
     orig_w, orig_h = image.size
     target_w, target_h = out_size
 
-    # Pre-scale image if smaller than target to ensure high-quality crops
-    min_scale = max(target_w / orig_w, target_h / orig_h)
-    base_w = int(orig_w * min_scale)
-    base_h = int(orig_h * min_scale)
+    # Scale original image so that even at maximum zoom-in/out and pan offsets,
+    # the canvas completely covers the 9:16 target viewport without black edges.
+    min_scale = max(target_w / orig_w, target_h / orig_h) * zoom_factor
+    base_w = int(math.ceil(orig_w * min_scale))
+    base_h = int(math.ceil(orig_h * min_scale))
     base_image = image.resize((base_w, base_h), Image.Resampling.LANCZOS)
 
     # Frame generator function
@@ -247,21 +290,24 @@ def apply_ken_burns_effect(
         # Smooth ease-in-out curve
         ease = 0.5 - 0.5 * math.cos(progress * math.pi)
 
+        # Smooth zoom from 1.0 to zoom_factor
         current_zoom = 1.0 + (zoom_factor - 1.0) * ease
-        crop_w = base_w / current_zoom
-        crop_h = base_h / current_zoom
 
-        # Slight pan from top-left offset to bottom-right offset
-        max_pan_x = max(0, base_w - crop_w)
-        max_pan_y = max(0, base_h - crop_h)
+        # Maintain exact target aspect ratio (9:16) at all zoom levels
+        crop_w = (target_w * zoom_factor) / current_zoom
+        crop_h = (target_h * zoom_factor) / current_zoom
 
-        left = max_pan_x * 0.3 + (max_pan_x * 0.4) * ease
-        top = max_pan_y * 0.3 + (max_pan_y * 0.4) * ease
+        # Smooth pan from top-left bias to bottom-right bias
+        max_pan_x = max(0.0, float(base_w - crop_w))
+        max_pan_y = max(0.0, float(base_h - crop_h))
+
+        left = (max_pan_x * 0.3) + (max_pan_x * 0.4) * ease
+        top = (max_pan_y * 0.3) + (max_pan_y * 0.4) * ease
         right = left + crop_w
         bottom = top + crop_h
 
         cropped = base_image.crop((left, top, right, bottom))
-        resized = cropped.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        resized = cropped.resize((target_w, target_h), Image.Resampling.BICUBIC)
         return np.array(resized)
 
     return VideoClip(make_frame, duration=duration)
@@ -273,12 +319,15 @@ def main():
     parser.add_argument("--output", type=str, required=True, help="Path for rendered output video clip (.mp4)")
     parser.add_argument("--image-output", type=str, default=None, help="Optional path to save still image")
     parser.add_argument("--server", type=str, default="http://127.0.0.1:8188", help="ComfyUI server URL")
-    parser.add_argument("--width", type=int, default=512, help="Image width (default: 512)")
-    parser.add_argument("--height", type=int, default=512, help="Image height (default: 512)")
+    parser.add_argument("--width", type=int, default=512, help="Image generation width (default: 512)")
+    parser.add_argument("--height", type=int, default=512, help="Image generation height (default: 512)")
+    parser.add_argument("--out-width", type=int, default=1080, help="Output video width (default: 1080)")
+    parser.add_argument("--out-height", type=int, default=1920, help="Output video height (default: 1920)")
     parser.add_argument("--duration", type=float, default=4.0, help="Ken Burns clip duration in seconds")
     parser.add_argument("--fps", type=int, default=30, help="Video clip frame rate")
     parser.add_argument("--zoom-factor", type=float, default=1.15, help="Zoom scale factor (e.g. 1.15)")
-    parser.add_argument("--mock-on-error", action="store_true", default=True, help="Fallback to mock image if server offline")
+    parser.add_argument("--min-free-vram", type=int, default=1024, help="Preflight free VRAM safety threshold in MB")
+    parser.add_argument("--mock-on-error", action="store_true", default=False, help="Fallback to mock image if server offline (testing/dev only)")
     parser.add_argument("--disable-mock", action="store_true", default=False, help="Strict mode: fail immediately if ComfyUI generation fails")
     args = parser.parse_args()
     if args.disable_mock:
@@ -287,10 +336,13 @@ def main():
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 1. Preflight VRAM safety check before acquiring resources or starting generation
+    preflight_vram_check(min_free_mb=args.min_free_vram)
+
     pil_image = None
     start_time = time.time()
 
-    print(f"[COMFYUI_WORKER] Connecting to ComfyUI at {args.server}...")
+    print(f"[{ts()}] [COMFYUI_WORKER] Connecting to ComfyUI at {args.server}...", flush=True)
     try:
         pil_image = call_comfyui_api(
             server_url=args.server,
@@ -298,53 +350,70 @@ def main():
             width=args.width,
             height=args.height
         )
-        print("[COMFYUI_WORKER] Successfully generated image from ComfyUI.")
+        print(f"[{ts()}] [COMFYUI_WORKER] Successfully generated image from ComfyUI.", flush=True)
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, TimeoutError) as e:
         if args.mock_on_error:
             print(
-                f"[COMFYUI_WORKER] WARNING: ComfyUI server unavailable ({e.__class__.__name__}: {e}). "
+                f"[{ts()}] [COMFYUI_WORKER] WARNING: ComfyUI server unavailable ({e.__class__.__name__}: {e}). "
                 f"Engaging Rule 2 fallback: generating styled mock asset.",
-                file=sys.stderr
+                file=sys.stderr, flush=True
             )
             pil_image = generate_mock_image(args.prompt, args.width, args.height)
         else:
-            print(f"[COMFYUI_WORKER] ERROR: Failed to generate image: {e}", file=sys.stderr)
+            print(f"[{ts()}] [COMFYUI_WORKER] ERROR: Failed to generate image: {e}", file=sys.stderr, flush=True)
             sys.exit(1)
     except Exception as e:
         if args.mock_on_error:
-            print(f"[COMFYUI_WORKER] WARNING: Unexpected error ({e}). Using mock asset fallback.", file=sys.stderr)
+            print(f"[{ts()}] [COMFYUI_WORKER] WARNING: Unexpected error ({e}). Using mock asset fallback.", file=sys.stderr, flush=True)
             pil_image = generate_mock_image(args.prompt, args.width, args.height)
         else:
             raise
 
-    # Save intermediate still image if requested
-    if args.image_output:
-        img_out = Path(args.image_output).resolve()
-        img_out.parent.mkdir(parents=True, exist_ok=True)
-        pil_image.save(img_out)
-        print(f"[COMFYUI_WORKER] Saved intermediate still image to {img_out}")
+    # 2. Save still image to disk
+    still_img_path = Path(args.image_output).resolve() if args.image_output else output_path.with_suffix(".png")
+    still_img_path.parent.mkdir(parents=True, exist_ok=True)
+    pil_image.save(still_img_path)
+    print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: STILL_IMAGE_SAVED] Saved still image to {still_img_path}", flush=True)
 
-    # Apply Ken Burns animation
-    print(f"[COMFYUI_WORKER] Applying Ken Burns pan/zoom (duration: {args.duration}s, zoom: {args.zoom_factor}x)...")
+    # 3. Purge ComfyUI VRAM via /free IMMEDIATELY after still image is saved, before Ken Burns / NVENC
+    free_endpoint = f"{args.server.rstrip('/')}/free"
+    print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: FREE_CALLED] Requesting ComfyUI /free (unload_models=True, free_memory=True)...", flush=True)
+    try:
+        free_resp = requests.post(
+            free_endpoint,
+            json={"unload_models": True, "free_memory": True},
+            timeout=10.0
+        )
+        free_resp.raise_for_status()
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: FREE_RESPONSE] ComfyUI /free succeeded (status {free_resp.status_code})", flush=True)
+    except Exception as free_err:
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: FREE_RESPONSE] Warning: /free request failed: {free_err}", file=sys.stderr, flush=True)
+
+    # 4. Apply Ken Burns animation
+    print(f"[{ts()}] [COMFYUI_WORKER] Applying Ken Burns pan/zoom (duration: {args.duration}s, zoom: {args.zoom_factor}x, out: {args.out_width}x{args.out_height})...", flush=True)
     clip = apply_ken_burns_effect(
         image=pil_image,
         duration=args.duration,
         fps=args.fps,
         zoom_factor=args.zoom_factor,
-        out_size=(args.width, args.height)
+        out_size=(args.out_width, args.out_height)
     )
 
-    # Render clip using NVENC if available or libx264
+    # 5. Render clip using NVENC (Rule 1 compliance)
     codec = "h264_nvenc"
     instagram_ffmpeg_params = [
         "-g", "48",
         "-keyint_min", "48",
         "-sc_threshold", "0",
         "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         "-movflags", "+faststart"
     ]
     try:
-        print(f"[COMFYUI_WORKER] Rendering Ken Burns video with {codec} to {output_path}...")
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: NVENC_START] Rendering Ken Burns video with {codec} to {output_path}...", flush=True)
         clip.write_videofile(
             str(output_path),
             fps=args.fps,
@@ -353,8 +422,10 @@ def main():
             logger=None,
             ffmpeg_params=instagram_ffmpeg_params
         )
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: NVENC_COMPLETE] NVENC encode complete.", flush=True)
     except Exception as render_err:
-        print(f"[COMFYUI_WORKER] NVENC render fallback to libx264 due to: {render_err}", file=sys.stderr)
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: NVENC_FAILED] NVENC render fallback to libx264 due to: {render_err}", file=sys.stderr, flush=True)
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: NVENC_START] Rendering Ken Burns video with libx264 to {output_path}...", flush=True)
         clip.write_videofile(
             str(output_path),
             fps=args.fps,
@@ -363,9 +434,10 @@ def main():
             logger=None,
             ffmpeg_params=instagram_ffmpeg_params
         )
+        print(f"[{ts()}] [COMFYUI_WORKER] [STAGE: NVENC_COMPLETE] libx264 encode complete.", flush=True)
 
     elapsed = time.time() - start_time
-    print(f"[COMFYUI_WORKER] Ken Burns clip created successfully at {output_path} ({elapsed:.2f}s elapsed)")
+    print(f"[{ts()}] [COMFYUI_WORKER] Ken Burns clip created successfully at {output_path} ({elapsed:.2f}s elapsed)", flush=True)
 
     # Explicit subprocess exit guarantees OS-level cleanup
     sys.exit(0)

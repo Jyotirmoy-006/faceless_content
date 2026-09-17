@@ -8,20 +8,29 @@ torchaudio==2.6.0+cu124
 # Video & Audio Processing
 moviepy
 ffmpeg-python
+pydub>=0.25.1
 
 # Speech & Transcription
 openai-whisper
 edge-tts
 piper-tts
+pysubs2
 
 # Data Validation & LLM
 pydantic>=2.0
 google-genai
 
-# Utilities
+# Utilities & Environment
 requests
 python-dotenv
 boto3
 google-api-python-client
 google-auth-oauthlib
+filelock
+tzdata
 
+# Testing
+pytest
+
+# Web Dashboard (Mission G Control Plane)
+flask>=3.0.0

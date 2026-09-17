@@ -25,6 +25,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from pipeline.core.schema import Script, ScriptSegment
+from pipeline.core.llm_manager import llm_manager, AgentRole
 
 # Configure module logger
 logger = logging.getLogger("scriptwriter")
@@ -35,7 +36,7 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 FALLBACK_TEMPLATES_DIR = Path(__file__).resolve().parent / "fallback_templates"
-PRIMARY_MODEL = "gemini-3.6-flash"
+PRIMARY_MODEL = llm_manager.resolve_model(AgentRole.COPYWRITER)
 BACKUP_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash"]
 
 
@@ -127,7 +128,8 @@ def get_valid_script(
     topic: str,
     niche: Optional[str] = "general",
     max_retries: int = 2,
-    client = None
+    client = None,
+    feedback: Optional[str] = None
 ) -> Script:
     """Fetches and validates a video script from Gemini with bounded retries and fallback.
 
@@ -136,21 +138,21 @@ def get_valid_script(
         niche: Category (e.g. 'tech', 'finance', 'history', 'psychology', 'general').
         max_retries: Maximum number of corrective retries on ValidationError (Rule 8).
         client: Optional pre-configured google.genai.Client instance.
+        feedback: Optional feedback from previous verification failure for corrective prompt.
 
     Returns:
         Script: Guaranteed valid Pydantic Script instance.
     """
     dotenv.load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-
+    model_name = PRIMARY_MODEL
     if client is None:
-        if not api_key:
+        try:
+            client, model_name, active_account = llm_manager.get_client_and_model(AgentRole.COPYWRITER)
+        except Exception as e:
             logger.warning(
-                f"GEMINI_API_KEY is not configured in environment. Loading fallback template for topic: '{topic}'."
+                f"[LLM_MANAGER] Unable to resolve healthy account ({e}). Loading fallback template for topic: '{topic}'."
             )
             return load_fallback_template(topic, niche)
-        from google import genai
-        client = genai.Client(api_key=api_key)
 
     system_prompt = (
         "You are an elite short-form viral video scriptwriter (YouTube Shorts, Instagram Reels). "
@@ -166,6 +168,12 @@ def get_valid_script(
         f"Target duration: 30 to 45 seconds total across 3 to 5 narrative segments.\n"
         "Ensure all schema fields (hook, segments with segment_index, narration, visual_query, duration_seconds) are fully provided."
     )
+    if feedback:
+        prompt += (
+            f"\n\nIMPORTANT REVISION FEEDBACK: Your previous draft failed verification:\n"
+            f"{feedback}\n"
+            f"Please strictly correct these issues and adhere to all requirements."
+        )
 
     last_failure_reason = "Unknown error"
     current_contents = prompt
@@ -176,7 +184,8 @@ def get_valid_script(
             raw_text, parsed_obj = _call_gemini_structured(
                 client=client,
                 contents=current_contents,
-                system_instruction=system_prompt
+                system_instruction=system_prompt,
+                model_name=model_name
             )
 
             # 1. Check if native SDK parsed it into the Pydantic model directly

@@ -12,6 +12,10 @@ import sys
 import time
 from pathlib import Path
 
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 
 def format_srt_timestamp(seconds: float) -> str:
     """Converts seconds into SRT timestamp format: HH:MM:SS,mmm"""
@@ -68,8 +72,7 @@ def main():
     print(f"[WHISPER_WORKER] Loading Whisper model '{args.model}' on {device}...")
     model = whisper.load_model(args.model, device=device)
 
-    print(f"[WHISPER_WORKER] Transcribing: {audio_path.name}...")
-    transcribe_options = {"verbose": False}
+    transcribe_options = {"verbose": False, "word_timestamps": True}
     if args.language:
         transcribe_options["language"] = args.language
 
@@ -78,6 +81,14 @@ def main():
 
     write_srt(result["segments"], output_path)
     print(f"[WHISPER_WORKER] Successfully wrote subtitles to {output_path} ({len(result['segments'])} segments, {duration:.2f}s elapsed)")
+
+    try:
+        from pipeline.core.caption_styler import generate_karaoke_ass
+        ass_path = output_path.with_suffix(".ass")
+        generate_karaoke_ass(result["segments"], ass_path)
+        print(f"[WHISPER_WORKER] Successfully generated styled ASS captions to {ass_path}")
+    except Exception as ass_err:
+        print(f"[WHISPER_WORKER] Warning: Failed to generate ASS captions ({ass_err})", file=sys.stderr)
 
     if use_cuda:
         peak_vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)

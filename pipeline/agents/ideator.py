@@ -27,6 +27,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from pipeline.core.schema import IdeaConcept
+from pipeline.core.llm_manager import llm_manager, AgentRole
 
 load_dotenv()
 
@@ -127,7 +128,8 @@ class IdeatorAgent:
         niche: str = "tech",
         custom_topic: Optional[str] = None,
         max_retries: int = 2,
-        dry_run: bool = False
+        dry_run: bool = False,
+        excluded_topics: Optional[list[str]] = None
     ) -> IdeaConcept:
         """Generates a structured video concept for short-form video production.
         
@@ -136,6 +138,7 @@ class IdeatorAgent:
             custom_topic: Optional user-specified topic override.
             max_retries: Maximum LLM re-prompt attempts on validation error.
             dry_run: If True, uses fallback template without calling Gemini API.
+            excluded_topics: Optional list of recent topics to exclude for SEO deduplication.
             
         Returns:
             Validated IdeaConcept Pydantic model.
@@ -149,9 +152,26 @@ class IdeatorAgent:
                 target_duration=30
             )
 
-        if dry_run or not self._client:
+        if excluded_topics is None:
+            try:
+                from pipeline.dashboard.database import get_recent_topics
+                excluded_topics = get_recent_topics(niche=clean_niche, limit=30)
+            except Exception as ex:
+                logger.debug(f"[ideator] Could not load recent topics from database: {ex}")
+                excluded_topics = []
+
+        client = self._client
+        model_name = llm_manager.resolve_model(AgentRole.COPYWRITER)
+        if client is None:
+            try:
+                client, model_name, _ = llm_manager.get_client_and_model(AgentRole.COPYWRITER)
+            except Exception as e:
+                logger.info(f"[ideator] No healthy LLM account available ({e}). Using fallback concept.")
+                return self._get_fallback_idea(clean_niche, excluded_topics)
+
+        if dry_run or not client:
             logger.info(f"[ideator] Using curated fallback concept for niche '{clean_niche}' (dry_run={dry_run}).")
-            return self._get_fallback_idea(clean_niche)
+            return self._get_fallback_idea(clean_niche, excluded_topics)
 
         prompt = (
             f"You are a viral YouTube Shorts and Instagram Reels concept strategist. "
@@ -160,13 +180,22 @@ class IdeatorAgent:
             f"Target duration should be 30 seconds."
         )
 
+        if excluded_topics:
+            exclusion_list = "\n".join(f"- {t}" for t in excluded_topics[:25])
+            prompt += (
+                f"\n\nCRITICAL DEDUPLICATION REQUIREMENT:\n"
+                f"You MUST NOT generate any topic on or substantially similar to these previously published topics:\n"
+                f"{exclusion_list}\n"
+                f"Your topic must be completely novel and distinctive to prevent audience and SEO cannibalization."
+            )
+
         from google.genai import types
 
         for attempt in range(1, max_retries + 2):
             logger.info(f"Generating concept idea for niche '{clean_niche}' (Attempt {attempt}/{max_retries + 1})...")
             try:
-                response = self._client.models.generate_content(
-                    model="gemini-3.6-flash",
+                response = client.models.generate_content(
+                    model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -178,6 +207,14 @@ class IdeatorAgent:
                 raw_text = response.text.strip()
                 parsed = json.loads(raw_text)
                 idea = IdeaConcept.model_validate(parsed)
+
+                if excluded_topics:
+                    lower_topic = idea.topic.strip().lower()
+                    if any(lower_topic == ex.strip().lower() for ex in excluded_topics):
+                        logger.warning(f"Generated topic '{idea.topic}' duplicates an existing topic. Retrying...")
+                        prompt += f"\n\nRejection: Topic '{idea.topic}' was already used. Produce an entirely different concept."
+                        continue
+
                 logger.info(f"Concept validated successfully: '{idea.topic}'")
                 return idea
 
@@ -192,11 +229,17 @@ class IdeatorAgent:
                     break
 
         logger.warning(f"[FALLBACK] Ideation failed after {max_retries + 1} attempts. Loading fallback concept.")
-        return self._get_fallback_idea(clean_niche)
+        return self._get_fallback_idea(clean_niche, excluded_topics)
 
-    def _get_fallback_idea(self, niche: str) -> IdeaConcept:
-        """Selects a curated fallback idea for the specified niche."""
+    def _get_fallback_idea(self, niche: str, excluded_topics: Optional[list[str]] = None) -> IdeaConcept:
+        """Selects a curated fallback idea for the specified niche, filtering out duplicates."""
         catalog = FALLBACK_IDEAS.get(niche) or FALLBACK_IDEAS.get("tech", [])
+        if excluded_topics:
+            ex_set = {t.strip().lower() for t in excluded_topics}
+            available = [item for item in catalog if item["topic"].strip().lower() not in ex_set]
+            if available:
+                chosen = random.choice(available)
+                return IdeaConcept.model_validate(chosen)
         chosen = random.choice(catalog)
         return IdeaConcept.model_validate(chosen)
 

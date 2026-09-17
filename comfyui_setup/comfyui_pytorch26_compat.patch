@@ -1,0 +1,141 @@
+# ComfyUI PyTorch 2.6 & Python 3.11 Compatibility Patch
+#
+# Root Cause:
+# 1. ComfyUI upstream master branch imports comfy_kitchen in several core and extension modules:
+#    - comfy/ldm/modules/attention.py
+#    - comfy/model_prefetch.py
+#    - comfy/text_encoders/llama.py
+#    - comfy/ldm/joyimage/model.py
+#    - comfy/ldm/lightricks/vae/na_diffusion_decoder.py
+#    - comfy_extras/nodes_sparse_attention.py
+# 2. comfy_kitchen (v0.2.34) uses PEP 585 type hints (e.g. list[int], Tensor | None)
+#    inside @torch.library.custom_op decorators (e.g., conv3d.py), which PyTorch 2.6 schema
+#    inference engine rejects during module import on Python 3.11 with:
+#    'ValueError: infer_schema(func): Parameter stride has unsupported type list[int]'.
+# 3. comfy_kitchen is an optional accelerator for FP8/FP4 operations on CUDA 13+ devices.
+#    SD1.5 standard checkpoint inference (e.g., DreamShaper 8) does not require it.
+# 4. In upstream attention.py, model_management was also missing from top-level imports
+#    when optional attention backends failed, causing a NameError on model_management.force_upcast_attention_dtype().
+#
+# This patch:
+# - Wraps comfy_kitchen in try/except import guards with graceful fallback to None.
+# - Explicitly imports model_management from comfy.
+# - Makes external attention backends (sageattention, flash_attn, xformers) fail-soft rather than crashing on startup.
+# - Safeguards the flash_attention_decode_is_available check in llama.py when comfy_kitchen is None.
+#
+diff --git a/comfy/ldm/joyimage/model.py b/comfy/ldm/joyimage/model.py
+index 9d6951e5..4bed4eab 100644
+--- a/comfy/ldm/joyimage/model.py
++++ b/comfy/ldm/joyimage/model.py
+@@ -2,7 +2,10 @@
+ import math
+ from typing import Optional, Tuple
+ 
+-import comfy_kitchen
++try:
++    import comfy_kitchen
++except Exception:
++    comfy_kitchen = None
+ import torch
+ import torch.nn as nn
+ 
+diff --git a/comfy/ldm/lightricks/vae/na_diffusion_decoder.py b/comfy/ldm/lightricks/vae/na_diffusion_decoder.py
+index ec539c66..66623a50 100644
+--- a/comfy/ldm/lightricks/vae/na_diffusion_decoder.py
++++ b/comfy/ldm/lightricks/vae/na_diffusion_decoder.py
+@@ -27,7 +27,10 @@ import comfy.model_management
+ from comfy.ldm.lightricks.model import get_timestep_embedding
+ from .causal_video_autoencoder import Encoder, processor
+ 
+-import comfy_kitchen
++try:
++    import comfy_kitchen
++except Exception:
++    comfy_kitchen = None
+ 
+ # Token chunk for the SwiGLU MLP (bounds the [chunk, hidden] workspace).
+ MLP_TOKEN_CHUNK = 65536
+diff --git a/comfy/ldm/modules/attention.py b/comfy/ldm/modules/attention.py
+index 4d6cf859..38f83496 100644
+--- a/comfy/ldm/modules/attention.py
++++ b/comfy/ldm/modules/attention.py
+@@ -10,7 +10,12 @@ from typing import Optional, Any, Callable, Union
+ import logging
+ import functools
+ 
+-import comfy_kitchen
++try:
++    import comfy_kitchen
++    COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE = comfy_kitchen.int8_attention_is_available()
++except Exception:
++    comfy_kitchen = None
++    COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE = False
+ 
+ from .diffusionmodules.util import AlphaBlender, timestep_embedding
+ from .sub_quadratic_attention import efficient_dot_product_attention
+@@ -51,8 +56,6 @@ except ImportError:
+         logging.error(f"\n\nTo use the `--use-flash-attention` feature, the `flash-attn` package must be installed first.\ncommand:\n\t{sys.executable} -m pip install flash-attn")
+         exit(-1)
+ 
+-COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE = comfy_kitchen.int8_attention_is_available()
+-
+ REGISTERED_ATTENTION_FUNCTIONS = {}
+ def register_attention_function(name: str, func: Callable):
+     # avoid replacing existing functions
+diff --git a/comfy/model_prefetch.py b/comfy/model_prefetch.py
+index 418faa51..a231cede 100644
+--- a/comfy/model_prefetch.py
++++ b/comfy/model_prefetch.py
+@@ -3,7 +3,10 @@ import threading
+ import warnings
+ import weakref
+ 
+-import comfy_kitchen as ck
++try:
++    import comfy_kitchen as ck
++except Exception:
++    ck = None
+ import torch
+ 
+ import comfy_aimdo.malloc_graph
+diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py
+index d71daf3a..4b3ea495 100644
+--- a/comfy/text_encoders/llama.py
++++ b/comfy/text_encoders/llama.py
+@@ -5,7 +5,10 @@ from typing import Optional, Any, Tuple
+ import math
+ from tqdm import tqdm
+ import comfy.utils
+-import comfy_kitchen
++try:
++    import comfy_kitchen
++except Exception:
++    comfy_kitchen = None
+ 
+ from comfy.ldm.modules.attention import optimized_attention_for_device
+ import comfy.model_management
+@@ -808,7 +811,7 @@ class Llama2_(nn.Module):
+ 
+     def init_kv_cache(self, batch, capacity, device, dtype):
+         caches = []
+-        fixed_kv = self.fixed_kv and comfy_kitchen.flash_attention_decode_is_available(device)
++        fixed_kv = self.fixed_kv and (comfy_kitchen is not None and comfy_kitchen.flash_attention_decode_is_available(device))
+         for _ in range(self.config.num_hidden_layers):
+             if fixed_kv:
+                 key = torch.empty((batch, capacity, self.config.num_key_value_heads, self.config.head_dim), device=device, dtype=dtype)
+diff --git a/comfy_extras/nodes_sparse_attention.py b/comfy_extras/nodes_sparse_attention.py
+index 006d1eb3..6c4c1634 100644
+--- a/comfy_extras/nodes_sparse_attention.py
++++ b/comfy_extras/nodes_sparse_attention.py
+@@ -7,7 +7,10 @@ import logging
+ import re
+ import weakref
+ 
+-import comfy_kitchen as ck
++try:
++    import comfy_kitchen as ck
++except Exception:
++    ck = None
+ import torch
+ 
+ import comfy.model_management

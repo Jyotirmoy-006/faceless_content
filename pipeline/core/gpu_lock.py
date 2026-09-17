@@ -30,11 +30,62 @@ class GPULockError(Exception):
     pass
 
 
+def check_free_vram_mb() -> int:
+    """Queries current free VRAM in MiB using nvidia-smi."""
+    try:
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, check=True, timeout=5.0
+        )
+        return int(res.stdout.strip().split("\n")[0].strip())
+    except Exception as e:
+        print(f"[GPU_LOCK] Warning: failed to query nvidia-smi ({e}), assuming 4096 MB", file=sys.stderr)
+        return 4096
+
+
+def preflight_vram_check(
+    min_free_mb: int = 1024,
+    max_attempts: int = 5,
+    backoff_seconds: float = 2.0,
+    worker_name: str = "GPU_WORKER"
+) -> int:
+    """Preflight VRAM safety check: ensures sufficient free VRAM exists before starting GPU workload.
+
+    If free VRAM is below safety threshold, retries with exponential backoff.
+    Raises GPULockError if free VRAM remains insufficient after all attempts.
+    """
+    current_backoff = backoff_seconds
+    for attempt in range(1, max_attempts + 1):
+        free_mb = check_free_vram_mb()
+        if free_mb >= min_free_mb:
+            print(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [PREFLIGHT_VRAM_OK] {worker_name}: "
+                f"Free VRAM {free_mb} MB >= threshold {min_free_mb} MB.",
+                flush=True
+            )
+            return free_mb
+        print(
+            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [PREFLIGHT_VRAM_LOW] {worker_name}: "
+            f"Free VRAM ({free_mb} MB) below safety threshold ({min_free_mb} MB). "
+            f"Attempt {attempt}/{max_attempts}. Backing off for {current_backoff:.1f}s...",
+            file=sys.stderr,
+            flush=True
+        )
+        time.sleep(current_backoff)
+        current_backoff *= 1.5
+
+    raise GPULockError(
+        f"Preflight VRAM safety check failed for {worker_name}: "
+        f"Free VRAM ({check_free_vram_mb()} MB) remained below {min_free_mb} MB after {max_attempts} attempts."
+    )
+
+
 @contextmanager
 def gpu_lock(
     timeout: float = 180.0,
     lock_path: Optional[Path] = None,
-    worker_name: str = "unknown"
+    worker_name: str = "unknown",
+    preflight_vram_mb: Optional[int] = None
 ):
     """Context manager for acquiring the GPU lock across processes.
 
@@ -42,6 +93,8 @@ def gpu_lock(
         timeout: Maximum seconds to wait before timing out (Rule 8 compliance).
         lock_path: Path to the lock file. Defaults to DEFAULT_LOCK_PATH.
         worker_name: Descriptive name of the worker holding the lock.
+        preflight_vram_mb: Optional VRAM threshold in MB to verify before acquiring lock.
+
 
     Yields:
         Path: Path to the lock file.
@@ -59,6 +112,9 @@ def gpu_lock(
     acquire_start = time.time()
 
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [GPU_LOCK] PID {pid} ({worker_name}) requesting GPU lock...", flush=True)
+
+    if preflight_vram_mb is not None:
+        preflight_vram_check(min_free_mb=preflight_vram_mb, worker_name=worker_name)
 
     try:
         lock.acquire(timeout=timeout)

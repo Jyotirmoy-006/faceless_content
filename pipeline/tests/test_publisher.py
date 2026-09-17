@@ -132,6 +132,23 @@ class TestPublisherAgent(unittest.TestCase):
         self.assertEqual(persisted["history"][-1]["units"], 1600)
         print("\n[CRITERIA 2 PASS] Quota consumption (1600 units) and unverified project warning verified.")
 
+    def test_youtube_upload_failure_refunds_quota(self):
+        """Verify that a failed upload automatically refunds the 1600 reserved quota units."""
+        self.assertEqual(self.quota_tracker.get_used_units(), 0)
+
+        with patch.object(self.publisher, "_execute_youtube_upload", side_effect=RuntimeError("Simulated upload network crash")):
+            result = self.publisher.publish_to_youtube(
+                video_path=self.dummy_video,
+                title="Failed Upload Concept"
+            )
+
+        self.assertEqual(result.status, PublishStatus.FAILED)
+        self.assertEqual(result.units_spent, 0)
+        # Quota must be safely refunded
+        self.assertEqual(self.quota_tracker.get_used_units(), 0)
+        self.assertEqual(self.quota_tracker.get_available_quota(), 10_000)
+
+
     # -------------------------------------------------------------------------
     # CRITERIA 3: Instagram Hosting Justification & External HTTPS Reachability
     # -------------------------------------------------------------------------

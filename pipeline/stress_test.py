@@ -26,32 +26,63 @@ ASSETS_DIR = ROOT_DIR / "pipeline" / "assets_cache"
 OUTPUT_DIR = ROOT_DIR / "pipeline" / "output"
 
 
-def query_vram_mb() -> int:
-    """Queries current VRAM used in MB via nvidia-smi."""
+import threading
+
+def query_vram_stats() -> tuple:
+    """Queries current VRAM used and free in MB via nvidia-smi."""
     try:
         res = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=memory.used,memory.free", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            timeout=2.0
         )
-        return int(res.stdout.strip().split("\n")[0].strip())
+        parts = [int(x.strip()) for x in res.stdout.strip().split("\n")[0].split(",")]
+        return parts[0], parts[1]
     except Exception as e:
         print(f"[WARN] Failed to query nvidia-smi: {e}", file=sys.stderr)
-        return -1
+        return -1, -1
+
+
+def query_vram_mb() -> int:
+    """Queries current VRAM used in MB via nvidia-smi."""
+    used, _ = query_vram_stats()
+    return used
+
+
+# Global shared poller samples: list of (timestamp, time_str, used_mb, free_mb)
+_vram_samples = []
+_stop_polling = threading.Event()
+
+
+def vram_poller_thread(interval: float = 0.25):
+    """Continuously polls nvidia-smi at 0.2-0.3s intervals for the entire stress test."""
+    while not _stop_polling.is_set():
+        t = time.time()
+        time_str = time.strftime('%H:%M:%S', time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
+        used, free = query_vram_stats()
+        if used >= 0:
+            _vram_samples.append((t, time_str, used, free))
+        time.sleep(interval)
 
 
 def run_worker_task(worker_name: str, cmd_args: list, delay_start: float = 0.0) -> dict:
-    """Runs a worker under the GPU lock with high-precision timestamp logging."""
+    """Runs a worker under the GPU lock with continuous VRAM tracking and preflight checks."""
     if delay_start > 0:
         time.sleep(delay_start)
 
-    from pipeline.core.gpu_lock import gpu_lock
+    from pipeline.core.gpu_lock import gpu_lock, preflight_vram_check
 
     pid = os.getpid()
     request_ts = time.time()
     req_time_str = time.strftime('%H:%M:%S', time.localtime(request_ts)) + f".{int((request_ts % 1) * 1000):03d}"
     print(f"\n[{req_time_str}] >>> [{worker_name}] (PID {pid}) QUEUED: Requesting GPU lock...", flush=True)
+
+    # Preflight VRAM check immediately before acquiring GPU lock for ComfyUI
+    if "comfyui" in worker_name.lower():
+        print(f"[{req_time_str}] [{worker_name}] Running preflight VRAM check before acquiring GPU lock...", flush=True)
+        preflight_vram_check(min_free_mb=1024, worker_name=worker_name)
 
     vram_before = query_vram_mb()
 
@@ -60,9 +91,7 @@ def run_worker_task(worker_name: str, cmd_args: list, delay_start: float = 0.0) 
         acq_time_str = time.strftime('%H:%M:%S', time.localtime(acquire_ts)) + f".{int((acquire_ts % 1) * 1000):03d}"
         print(f"[{acq_time_str}] *** [{worker_name}] (PID {pid}) RUNNING ON GPU (Lock wait: {acquire_ts - request_ts:.3f}s)...", flush=True)
 
-        vram_start = query_vram_mb()
         proc = subprocess.run(cmd_args, capture_output=True, text=True)
-        vram_peak_check = query_vram_mb()
         release_ts = time.time()
 
     rel_time_str = time.strftime('%H:%M:%S', time.localtime(release_ts)) + f".{int((release_ts % 1) * 1000):03d}"
@@ -70,6 +99,15 @@ def run_worker_task(worker_name: str, cmd_args: list, delay_start: float = 0.0) 
 
     time.sleep(0.5)  # allow OS driver to settle
     vram_after = query_vram_mb()
+
+    # Extract continuous VRAM samples during this worker's lock window
+    worker_samples = [s for s in _vram_samples if acquire_ts <= s[0] <= release_ts]
+    if worker_samples:
+        peak_used = max(s[2] for s in worker_samples)
+        min_free = min(s[3] for s in worker_samples)
+    else:
+        peak_used = vram_before
+        min_free = -1
 
     return {
         "worker": worker_name,
@@ -82,8 +120,10 @@ def run_worker_task(worker_name: str, cmd_args: list, delay_start: float = 0.0) 
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "vram_before": vram_before,
-        "vram_during": max(vram_start, vram_peak_check),
-        "vram_after": vram_after
+        "vram_during": peak_used,
+        "vram_min_free": min_free,
+        "vram_after": vram_after,
+        "samples_count": len(worker_samples)
     }
 
 
@@ -117,7 +157,8 @@ def main():
                 PYTHON_EXE, str(WORKERS_DIR / "comfyui_worker.py"),
                 "--prompt", "GPU lock stress test visual",
                 "--output", str(comfy_clip),
-                "--duration", "3.0"
+                "--duration", "3.0",
+                "--mock-on-error"
             ], check=True)
 
     # Prepare worker command lines (3 distinct GPU-bound workers)
@@ -153,6 +194,11 @@ def main():
 
     start_all = time.time()
 
+    # Launch continuous background VRAM poller thread at 0.25s intervals
+    _stop_polling.clear()
+    poller = threading.Thread(target=vram_poller_thread, args=(0.25,), daemon=True)
+    poller.start()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         # Launch Worker A at 0.0s, Worker B at 0.05s, Worker C at 0.10s to force intense lock contention
         future_a = executor.submit(run_worker_task, "WORKER_A (Whisper)", whisper_cmd, 0.0)
@@ -162,6 +208,9 @@ def main():
         result_a = future_a.result()
         result_b = future_b.result()
         result_c = future_c.result()
+
+    _stop_polling.set()
+    poller.join(timeout=2.0)
 
     total_elapsed = time.time() - start_all
     final_vram = query_vram_mb()
@@ -208,14 +257,47 @@ def main():
     else:
         print("\nSUCCESS: 100% GPU serialization confirmed across Whisper, Real ComfyUI, and NVENC Render!")
 
-    print("\n--- INDIVIDUAL WORKER VRAM LOGS ---")
+    print("\n--- CONTINUOUS VRAM POLLING & PEAK ANALYSIS ---")
+    total_samples = len(_vram_samples)
+    global_peak_used = max(s[2] for s in _vram_samples) if _vram_samples else baseline_vram
+    global_min_free = min(s[3] for s in _vram_samples) if _vram_samples else -1
+    print(f"Total continuous VRAM samples: {total_samples} (polled every 0.25s)")
+    print(f"Overall Global Peak VRAM:       {global_peak_used} MB")
+    print(f"Overall Minimum Free VRAM:      {global_min_free} MB")
+
+    print("\n--- PER-WORKER VRAM METRICS (LOCK-BOUND WINDOWS) ---")
     for r in results:
-        print(f"{r['worker']} - VRAM Before: {r['vram_before']} MB | Peak: {r['vram_during']} MB | After: {r['vram_after']} MB")
+        print(f"{r['worker']}:")
+        print(f"  VRAM Before Lock:     {r['vram_before']} MB")
+        print(f"  Real Peak Under Lock: {r['vram_during']} MB")
+        print(f"  Min Free Under Lock:  {r['vram_min_free']} MB")
+        print(f"  VRAM After Lock:      {r['vram_after']} MB")
+        print(f"  Continuous Samples:   {r['samples_count']}")
+
+    print("\n" + "=" * 80)
+    print("VERIFICATION CHECKS (PROJECT_RULES.md & MISSION):")
+    print("=" * 80)
+
+    comfy_res = next(r for r in results if "comfyui" in r['worker'].lower())
+    print(f"1. Real ComfyUI Worker Peak VRAM: {comfy_res['vram_during']} MB ({comfy_res['vram_during'] / 1024:.2f} GB)")
+    if comfy_res['vram_during'] >= 3000:
+        print("   -> CONFIRMED: ComfyUI peak VRAM approaches the ~3.7GB standalone figure under continuous polling.")
+    else:
+        print(f"   -> WARNING: ComfyUI peak VRAM ({comfy_res['vram_during']} MB) did not reach 3GB!", file=sys.stderr)
+
+    if global_min_free > 0:
+        print(f"2. Positive VRAM Headroom: CONFIRMED ({global_min_free} MB free at minimum point, no OOM occurred).")
+    else:
+        print(f"2. Positive VRAM Headroom: FAILED (free VRAM hit {global_min_free} MB)!", file=sys.stderr)
+        sys.exit(1)
 
     for r in results:
         if r['exit_code'] != 0:
             print(f"ERROR: {r['worker']} failed with exit code {r['exit_code']}!", file=sys.stderr)
             sys.exit(1)
+
+    print("3. All 3 workers completed with exit code 0.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

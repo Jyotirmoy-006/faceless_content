@@ -203,6 +203,25 @@ class TestOrchestratorSafety(unittest.TestCase):
         self.assertIn("closed", msg.lower())
         print("\n[CRITERIA 4 PASS] Recovery verified: manual reset re-arms pipeline for scheduled execution.")
 
+    def test_transient_failures_do_not_trip_permanent_breaker(self):
+        """Verifies that transient errors (network timeouts, lock waits) do not trip the 3-strike breaker."""
+        self.assertTrue(self.breaker.can_execute()[0])
+
+        # Record 3 transient failures
+        for i in range(3):
+            self.breaker.record_failure(f"Transient timeout {i}", is_transient=True)
+
+        # Breaker must NOT be tripped after 3 transient failures
+        self.assertFalse(self.breaker.is_tripped())
+        self.assertEqual(self.breaker.get_consecutive_failures(), 0)
+        self.assertTrue(self.breaker.can_execute()[0])
+
+        # Permanent failure increments counter
+        self.breaker.record_failure("Permanent compliance violation", is_transient=False)
+        self.assertEqual(self.breaker.get_consecutive_failures(), 1)
+        self.assertFalse(self.breaker.is_tripped())
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

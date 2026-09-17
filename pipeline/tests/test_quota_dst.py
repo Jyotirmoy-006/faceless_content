@@ -16,6 +16,11 @@ import unittest
 import zoneinfo
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from pipeline.core.quota_tracker import QuotaTracker, PACIFIC_TZ, YOUTUBE_VIDEO_UPLOAD_COST
 

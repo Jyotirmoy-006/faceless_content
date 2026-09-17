@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-DEFAULT_STATE_FILE = Path(__file__).resolve().parent / "circuit_breaker_state.json"
+DEFAULT_STATE_FILE = Path(os.environ.get("CIRCUIT_BREAKER_STATE_FILE", Path(__file__).resolve().parent / "circuit_breaker_state.json"))
 DEFAULT_ALERT_FILE = ROOT_DIR / "pipeline" / "output" / "alerts.log"
 
 logger = logging.getLogger("circuit_breaker")
@@ -99,6 +99,10 @@ class CircuitBreaker:
             if temp_file.exists():
                 temp_file.unlink()
 
+    def get_state(self) -> dict[str, Any]:
+        """Returns the current circuit breaker state dictionary."""
+        return self._ensure_state()
+
     def is_tripped(self) -> bool:
         """Returns True if the circuit breaker is currently OPEN."""
         state = self._ensure_state()
@@ -126,22 +130,65 @@ class CircuitBreaker:
     def record_success(self) -> None:
         """Resets consecutive failures to 0 and closes breaker on successful run."""
         state = self._ensure_state()
-        if state.get("consecutive_failures", 0) > 0 or state.get("is_open", False):
+        if state.get("consecutive_failures", 0) > 0 or state.get("transient_failures", 0) > 0 or state.get("is_open", False):
             logger.info("Pipeline run succeeded. Resetting consecutive failure counter.")
         state["consecutive_failures"] = 0
+        state["transient_failures"] = 0
         state["is_open"] = False
         state["tripped_at"] = None
         self._save_state(state)
 
-    def record_failure(self, reason: str) -> None:
-        """Records a pipeline failure, increments counter, and trips breaker after max_failures."""
+    def record_failure(
+        self,
+        reason: str,
+        is_transient: bool = False,
+        max_transient_failures: int = 6
+    ) -> None:
+        """Records a pipeline failure with smart categorization.
+        
+        Args:
+            reason: Description of the failure.
+            is_transient: If True, indicates a temporary glitch (network timeout, lock wait).
+                          Transient failures are tracked separately and do not increment the
+                          strict permanent 3-strike counter unless prolonged (>= max_transient_failures).
+            max_transient_failures: Threshold for consecutive transient failures before tripping.
+        """
         state = self._ensure_state()
+
+        if is_transient:
+            trans_count = int(state.get("transient_failures", 0)) + 1
+            state["transient_failures"] = trans_count
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "failure_number": trans_count,
+                "category": "TRANSIENT",
+                "reason": str(reason).strip()
+            }
+            if "history" not in state:
+                state["history"] = []
+            state["history"].append(entry)
+
+            logger.warning(
+                f"[CIRCUIT_BREAKER] Transient pipeline failure recorded ({trans_count}/{max_transient_failures}): "
+                f"{reason[:120]} (Permanent failure count remains {state.get('consecutive_failures', 0)})."
+            )
+
+            if trans_count >= max_transient_failures:
+                state["is_open"] = True
+                state["tripped_at"] = entry["timestamp"]
+                self._save_state(state)
+                self._emit_alert(state)
+            else:
+                self._save_state(state)
+            return
+
         failures = int(state.get("consecutive_failures", 0)) + 1
         state["consecutive_failures"] = failures
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "failure_number": failures,
+            "category": "PERMANENT",
             "reason": str(reason).strip()
         }
         if "history" not in state:
@@ -192,16 +239,17 @@ class CircuitBreaker:
         """Manually re-arms the circuit breaker."""
         state = self._ensure_state()
         state["consecutive_failures"] = 0
+        state["transient_failures"] = 0
         state["is_open"] = False
         state["tripped_at"] = None
         self._save_state(state)
-        logger.info("Circuit breaker has been manually RESET. Ready for scheduled execution.")
+        logger.info("Circuit breaker has been manually RESET to CLOSED status. Ready for scheduled execution.")
 
     def get_last_failure_reasons(self, count: int = 3) -> list[str]:
         """Retrieves the most recent failure reasons."""
         state = self._ensure_state()
         history = state.get("history", [])
-        return [h.get("reason", "Unknown") for h in history[-count:]]
+        return [h.get("reason", "Unknown") if isinstance(h, dict) else str(h) for h in history[-count:]]
 
     def get_consecutive_failures(self) -> int:
         """Returns the current number of consecutive failures."""

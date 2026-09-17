@@ -10,6 +10,9 @@ client_secrets.json
 *_token.json
 youtube_token.json
 quota_state.json
+llm_account_state.json
+*_state.json
+*.jsonl
 
 # Staging & Output (Rule 1 & Project Scaffold)
 output/*
@@ -52,6 +55,8 @@ pipeline.lock
 *.lock
 circuit_breaker_state.json
 alerts.log
+pipeline.log
+*.db
 
 # IDE & OS
 .vscode/
