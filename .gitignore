@@ -63,6 +63,7 @@ Thumbs.db
 # Heavy Model Weights & Local AI Models (Exceeds GitHub 50MB/100MB file limit)
 pipeline/models/
 ComfyUI/
+ComfyUI_server/
 *.safetensors
 *.onnx
 *.ckpt

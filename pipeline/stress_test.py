@@ -98,6 +98,7 @@ def main():
     # Audio & video test assets
     audio_file = ASSETS_DIR / "test_speech.mp3"
     comfy_clip = ASSETS_DIR / "test_comfy_clip.mp4"
+    comfy_out = OUTPUT_DIR / "stress_comfy.mp4"
     whisper_out = OUTPUT_DIR / "stress_whisper.srt"
     render_out = OUTPUT_DIR / "stress_render.mp4"
 
@@ -119,12 +120,20 @@ def main():
                 "--duration", "3.0"
             ], check=True)
 
-    # Prepare worker command lines
+    # Prepare worker command lines (3 distinct GPU-bound workers)
     whisper_cmd = [
         PYTHON_EXE, str(WORKERS_DIR / "whisper_worker.py"),
         "--audio", str(audio_file),
         "--output", str(whisper_out),
         "--device", "cuda"
+    ]
+
+    comfy_cmd = [
+        PYTHON_EXE, str(WORKERS_DIR / "comfyui_worker.py"),
+        "--prompt", "cybernetic mechanical crystal core 8k high quality cinematic",
+        "--output", str(comfy_out),
+        "--disable-mock",
+        "--duration", "3.0"
     ]
 
     render_cmd = [
@@ -135,21 +144,24 @@ def main():
     ]
 
     print("\n" + "-" * 80)
-    print("LAUNCHING CONCURRENT WORKER STRESS TEST")
-    print("Worker A: Whisper Speech Recognition (loads PyTorch CUDA model)")
-    print("Worker B: Instagram NVENC Video Render (MoviePy + NVENC encoding)")
-    print("Both workers are invoked simultaneously across separate threads/processes.")
+    print("LAUNCHING 3-WAY CONCURRENT WORKER STRESS TEST")
+    print("Worker A: Whisper Speech Recognition (PyTorch CUDA model)")
+    print("Worker B: Real ComfyUI SD1.5 Generation (DreamShaper 8 UNet + Ken Burns NVENC)")
+    print("Worker C: MoviePy Final Video Render (NVENC h264 encoding)")
+    print("All 3 workers are invoked concurrently across separate threads/processes.")
     print("-" * 80 + "\n")
 
     start_all = time.time()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        # Launch Worker A immediately, Worker B with a 0.1s offset to ensure contention
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        # Launch Worker A at 0.0s, Worker B at 0.05s, Worker C at 0.10s to force intense lock contention
         future_a = executor.submit(run_worker_task, "WORKER_A (Whisper)", whisper_cmd, 0.0)
-        future_b = executor.submit(run_worker_task, "WORKER_B (Render)", render_cmd, 0.1)
+        future_b = executor.submit(run_worker_task, "WORKER_B (ComfyUI-Real)", comfy_cmd, 0.05)
+        future_c = executor.submit(run_worker_task, "WORKER_C (Render)", render_cmd, 0.10)
 
         result_a = future_a.result()
         result_b = future_b.result()
+        result_c = future_c.result()
 
     total_elapsed = time.time() - start_all
     final_vram = query_vram_mb()
@@ -162,39 +174,48 @@ def main():
     print(f"Baseline VRAM before test: {baseline_vram} MB")
     print(f"Final VRAM after test:    {final_vram} MB (delta from baseline: {final_vram - baseline_vram} MB)")
 
-    print("\n--- TIMESTAMPS & OVERLAP ANALYSIS ---")
-    print(f"{result_a['worker']}:")
-    print(f"  Lock Requested: {time.strftime('%H:%M:%S', time.localtime(result_a['request_ts']))}.{int((result_a['request_ts'] % 1) * 1000):03d}")
-    print(f"  Lock Acquired:  {time.strftime('%H:%M:%S', time.localtime(result_a['acquire_ts']))}.{int((result_a['acquire_ts'] % 1) * 1000):03d}")
-    print(f"  Lock Released:  {time.strftime('%H:%M:%S', time.localtime(result_a['release_ts']))}.{int((result_a['release_ts'] % 1) * 1000):03d}")
-    print(f"  Exit Code:      {result_a['exit_code']}")
+    results = [result_a, result_b, result_c]
+    # Sort results by acquire timestamp to verify temporal sequence
+    sorted_results = sorted(results, key=lambda r: r['acquire_ts'])
 
-    print(f"\n{result_b['worker']}:")
-    print(f"  Lock Requested: {time.strftime('%H:%M:%S', time.localtime(result_b['request_ts']))}.{int((result_b['request_ts'] % 1) * 1000):03d}")
-    print(f"  Lock Acquired:  {time.strftime('%H:%M:%S', time.localtime(result_b['acquire_ts']))}.{int((result_b['acquire_ts'] % 1) * 1000):03d}")
-    print(f"  Lock Released:  {time.strftime('%H:%M:%S', time.localtime(result_b['release_ts']))}.{int((result_b['release_ts'] % 1) * 1000):03d}")
-    print(f"  Exit Code:      {result_b['exit_code']}")
+    print("\n--- RAW TIMESTAMPS & TIMELINE ---")
+    for r in results:
+        print(f"{r['worker']}:")
+        print(f"  Lock Requested: {r['request_ts']:.6f} ({time.strftime('%H:%M:%S', time.localtime(r['request_ts']))}.{int((r['request_ts'] % 1) * 1000):03d})")
+        print(f"  Lock Acquired:  {r['acquire_ts']:.6f} ({time.strftime('%H:%M:%S', time.localtime(r['acquire_ts']))}.{int((r['acquire_ts'] % 1) * 1000):03d})")
+        print(f"  Lock Released:  {r['release_ts']:.6f} ({time.strftime('%H:%M:%S', time.localtime(r['release_ts']))}.{int((r['release_ts'] % 1) * 1000):03d})")
+        print(f"  Duration Held:  {r['duration']:.3f}s")
+        print(f"  Exit Code:      {r['exit_code']}")
 
-    # Overlap validation: Worker B acquire must be >= Worker A release
-    overlap = max(0.0, min(result_a['release_ts'], result_b['release_ts']) - max(result_a['acquire_ts'], result_b['acquire_ts']))
-    gap = result_b['acquire_ts'] - result_a['release_ts']
+    print("\n--- CHRONOLOGICAL EXECUTION ORDER & OVERLAP ANALYSIS ---")
+    has_overlap = False
+    for i in range(len(sorted_results) - 1):
+        curr = sorted_results[i]
+        nxt = sorted_results[i + 1]
+        pair_overlap = max(0.0, min(curr['release_ts'], nxt['release_ts']) - max(curr['acquire_ts'], nxt['acquire_ts']))
+        pair_gap = nxt['acquire_ts'] - curr['release_ts']
+        print(f"Interval {i+1} -> {i+2}: [{curr['worker']}] -> [{nxt['worker']}]")
+        print(f"  Prior Release:  {curr['release_ts']:.6f}")
+        print(f"  Next Acquire:   {nxt['acquire_ts']:.6f}")
+        print(f"  Serialized Gap: {pair_gap:.6f}s")
+        print(f"  Overlap:        {pair_overlap:.6f}s")
+        if pair_overlap > 0.0:
+            has_overlap = True
 
-    print(f"\nGPU Execution Overlap: {overlap:.6f} seconds")
-    if overlap == 0.0:
-        print(f"SUCCESS: Strict serialization confirmed! Worker B waited {gap:.3f}s after Worker A released.")
-    else:
-        print(f"FAILURE: Overlap detected ({overlap:.3f}s)!", file=sys.stderr)
+    if has_overlap:
+        print("\nFAILURE: GPU overlap detected across concurrent workers!", file=sys.stderr)
         sys.exit(1)
+    else:
+        print("\nSUCCESS: 100% GPU serialization confirmed across Whisper, Real ComfyUI, and NVENC Render!")
 
     print("\n--- INDIVIDUAL WORKER VRAM LOGS ---")
-    print(f"{result_a['worker']} - VRAM Before: {result_a['vram_before']} MB | Peak: {result_a['vram_during']} MB | After: {result_a['vram_after']} MB")
-    print(f"{result_b['worker']} - VRAM Before: {result_b['vram_before']} MB | Peak: {result_b['vram_during']} MB | After: {result_b['vram_after']} MB")
+    for r in results:
+        print(f"{r['worker']} - VRAM Before: {r['vram_before']} MB | Peak: {r['vram_during']} MB | After: {r['vram_after']} MB")
 
-    if result_a['exit_code'] != 0 or result_b['exit_code'] != 0:
-        print("ERROR: One or more workers failed during stress test!", file=sys.stderr)
-        sys.exit(1)
-
-    print("\n[SUCCESS] Stress test completed successfully with 100% GPU serialization.")
+    for r in results:
+        if r['exit_code'] != 0:
+            print(f"ERROR: {r['worker']} failed with exit code {r['exit_code']}!", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -100,6 +100,21 @@ def call_comfyui_api(
     free_endpoint = f"{server_url.rstrip('/')}/free"
 
     # Standard SD 1.5 / SDXL workflow definition
+    ckpt_name = "DreamShaper_8_pruned.safetensors"
+    try:
+        obj_resp = requests.get(f"{server_url.rstrip('/')}/object_info/CheckpointLoaderSimple", timeout=5.0)
+        if obj_resp.status_code == 200:
+            available_ckpts = obj_resp.json().get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+            if available_ckpts:
+                if "DreamShaper_8_pruned.safetensors" in available_ckpts:
+                    ckpt_name = "DreamShaper_8_pruned.safetensors"
+                elif "v1-5-pruned-emaonly.safetensors" in available_ckpts:
+                    ckpt_name = "v1-5-pruned-emaonly.safetensors"
+                else:
+                    ckpt_name = available_ckpts[0]
+    except Exception:
+        pass
+
     workflow = {
         "3": {
             "inputs": {
@@ -118,7 +133,7 @@ def call_comfyui_api(
         },
         "4": {
             "inputs": {
-                "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+                "ckpt_name": ckpt_name
             },
             "class_type": "CheckpointLoaderSimple"
         },
@@ -264,7 +279,10 @@ def main():
     parser.add_argument("--fps", type=int, default=30, help="Video clip frame rate")
     parser.add_argument("--zoom-factor", type=float, default=1.15, help="Zoom scale factor (e.g. 1.15)")
     parser.add_argument("--mock-on-error", action="store_true", default=True, help="Fallback to mock image if server offline")
+    parser.add_argument("--disable-mock", action="store_true", default=False, help="Strict mode: fail immediately if ComfyUI generation fails")
     args = parser.parse_args()
+    if args.disable_mock:
+        args.mock_on_error = False
 
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
