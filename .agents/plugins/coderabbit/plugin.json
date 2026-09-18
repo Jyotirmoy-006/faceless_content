@@ -1,0 +1,7 @@
+{
+  "name": "coderabbit",
+  "version": "1.0.0",
+  "description": "CodeRabbit AI Code Review and Quality Gate Engine",
+  "skills": ["skills/coderabbit/SKILL.md"],
+  "rules": ["rules/coderabbit_rules.md"]
+}

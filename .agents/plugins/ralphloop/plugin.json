@@ -1,0 +1,7 @@
+{
+  "name": "ralphloop",
+  "version": "1.0.0",
+  "description": "Ralph Wiggum Autonomous Agent Loop and PRD Execution Engine",
+  "skills": ["skills/ralphloop/SKILL.md"],
+  "rules": ["rules/ralphloop_rules.md"]
+}

@@ -37,6 +37,14 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
+# Standard YouTube API scopes for full channel management and verification
+YOUTUBE_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/userinfo.email"
+]
+
+
 class PublishStatus(str, Enum):
     PUBLISHED = "PUBLISHED"
     DEFERRED = "DEFERRED"
@@ -52,7 +60,59 @@ class PublishResult(BaseModel):
     message: str = ""
     visibility: Optional[str] = None
     is_restricted: bool = False
+    error_code: Optional[str] = None
+    channel_info: Optional[dict[str, Any]] = None
     units_spent: int = 0
+
+
+def classify_youtube_error(exc: Exception) -> tuple[str, str]:
+    """Classifies YouTube API and OAuth exceptions into actionable machine error codes and descriptions."""
+    err_str = str(exc)
+    lower_err = err_str.lower()
+    
+    if "token expired" in lower_err or "invalid_grant" in lower_err or "revoked" in lower_err or "refresh" in lower_err and "fail" in lower_err:
+        return "YOUTUBE_OAUTH_EXPIRED", f"YouTube OAuth token is expired or revoked ({err_str}). Re-authentication required via client_secrets.json."
+    if "insufficient authentication scopes" in lower_err or "insufficientpermissions" in lower_err:
+        return "YOUTUBE_INSUFFICIENT_SCOPES", f"OAuth token lacks required permissions ({err_str}). Re-authentication with expanded scopes required."
+    if "quotaexceeded" in lower_err or "uploadlimitexceeded" in lower_err or "daily limit" in lower_err:
+        return "YOUTUBE_QUOTA_EXHAUSTED", f"YouTube API quota limit exceeded for today ({err_str}). Publishing must be deferred."
+    if "unverified" in lower_err or "testing" in lower_err:
+        return "UNVERIFIED_PROJECT_RESTRICTION", f"Google Cloud Project is unverified or in testing mode ({err_str})."
+    if "timed out" in lower_err or "timeout" in lower_err or "connection" in lower_err:
+        return "YOUTUBE_NETWORK_ERROR", f"Network error during YouTube upload ({err_str}). Check internet connectivity."
+    
+    return "YOUTUBE_API_ERROR", f"YouTube API encountered an error: {err_str}"
+
+
+def get_authenticated_channel_info(creds: Any) -> dict[str, Any]:
+    """Inspects authenticated Google account and YouTube channel metadata."""
+    info = {"authenticated": False, "email": None, "channel_id": None, "channel_title": None, "custom_url": None}
+    if not creds:
+        return info
+
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", credentials=creds)
+        ch_res = youtube.channels().list(part="snippet", mine=True).execute()
+        items = ch_res.get("items", [])
+        if items:
+            ch = items[0]
+            info["authenticated"] = True
+            info["channel_id"] = ch.get("id")
+            info["channel_title"] = ch.get("snippet", {}).get("title")
+            info["custom_url"] = ch.get("snippet", {}).get("customUrl")
+    except Exception as e:
+        logger.debug(f"[YOUTUBE_CHANNEL_CHECK] Could not query channel metadata: {e}")
+
+    try:
+        from googleapiclient.discovery import build
+        oauth2_client = build("oauth2", "v2", credentials=creds)
+        user_info = oauth2_client.userinfo().get().execute()
+        info["email"] = user_info.get("email")
+    except Exception as e:
+        logger.debug(f"[YOUTUBE_USER_CHECK] Could not query userinfo email: {e}")
+
+    return info
 
 
 class PublisherAgent:
@@ -85,13 +145,14 @@ class PublisherAgent:
         - Checks quota_tracker.has_budget(1600).
         - If insufficient, returns PublishStatus.DEFERRED cleanly without failing.
         - On successful upload, records 1600 units spent.
-        - Inspects returned visibility; warns if restricted by unverified OAuth app.
+        - Inspects returned visibility; detects and classifies unverified OAuth app restrictions.
         """
         path = Path(video_path)
         if not path.exists():
             return PublishResult(
                 platform="youtube",
                 status=PublishStatus.FAILED,
+                error_code="VIDEO_FILE_NOT_FOUND",
                 message=f"Video file does not exist: {path}"
             )
 
@@ -103,9 +164,16 @@ class PublisherAgent:
                 f"but only {available_quota} units available. Deferring upload to next quota reset window."
             )
             logger.warning(f"[QUOTA_DEFERRED] {msg}")
+            try:
+                from pipeline.core.notifier import notifier
+                notifier.alert(f"[YOUTUBE_QUOTA_DEFERRED] {msg}", level="WARNING")
+            except Exception:
+                pass
+
             return PublishResult(
                 platform="youtube",
                 status=PublishStatus.DEFERRED,
+                error_code="QUOTA_EXHAUSTED",
                 message=msg,
                 units_spent=0
             )
@@ -116,7 +184,7 @@ class PublisherAgent:
         )
 
         if dry_run:
-            logger.info("[DRY_RUN] Simulating YouTube upload (quota will NOT be spent in dry_run).")
+            logger.info(f"[DRY_RUN] Simulating YouTube upload (target visibility: {privacy_status}). Quota will NOT be spent.")
             return PublishResult(
                 platform="youtube",
                 status=PublishStatus.PUBLISHED,
@@ -134,28 +202,48 @@ class PublisherAgent:
                 units=YOUTUBE_VIDEO_UPLOAD_COST,
                 operation="videos.insert"
             ):
-                upload_response = self._execute_youtube_upload(
+                exec_res = self._execute_youtube_upload(
                     video_path=path,
                     title=title,
                     description=description,
                     tags=tags or ["#shorts"],
                     privacy_status=privacy_status
                 )
+                if isinstance(exec_res, tuple) and len(exec_res) == 2:
+                    upload_response, channel_meta = exec_res
+                else:
+                    upload_response, channel_meta = exec_res, {}
                 video_id = upload_response.get("id", "UNKNOWN_ID")
                 actual_privacy = upload_response.get("status", {}).get("privacyStatus", privacy_status)
                 
                 # 3. Detect & Surface Unverified Project Restriction
                 is_restricted = False
-                if privacy_status == "public" and actual_privacy.lower() in ("private", "unlisted"):
+                error_code = None
+                if privacy_status.lower() == "public" and actual_privacy.lower() in ("private", "unlisted"):
                     is_restricted = True
-                    logger.warning(
-                        f"[UNVERIFIED_PROJECT_WARNING] Video '{video_id}' was forced to '{actual_privacy}' "
-                        f"instead of requested 'public'. This occurs when the Google Cloud OAuth app is in "
-                        f"'Testing' mode or unverified. The video is safely uploaded but visibility is restricted."
+                    error_code = "UNVERIFIED_PROJECT_RESTRICTION"
+                    warning_msg = (
+                        f"[UNVERIFIED_PROJECT_RESTRICTION] Video '{video_id}' was forced to '{actual_privacy}' (Locked Private) "
+                        f"instead of requested '{privacy_status}'. Google enforces private-only uploads for OAuth apps in "
+                        f"'Testing' mode or without full verification. The video is safely stored on the channel but cannot "
+                        f"be viewed publicly until approved or opened in YouTube Studio."
                     )
+                    logger.warning(warning_msg)
+                    try:
+                        from pipeline.core.notifier import notifier
+                        notifier.alert(
+                            f"[UNVERIFIED_PROJECT_RESTRICTION] Video https://youtube.com/shorts/{video_id} locked to '{actual_privacy}' by Google policy. Configure test users in Google Cloud Console.",
+                            level="WARNING",
+                            extra={"video_id": video_id, "actual_privacy": actual_privacy}
+                        )
+                    except Exception:
+                        pass
 
             video_url = f"https://youtube.com/shorts/{video_id}"
-            logger.info(f"YouTube video successfully uploaded: {video_url} (Privacy: {actual_privacy})")
+            logger.info(f"[YOUTUBE_UPLOAD_SUCCESS] Watch URL: {video_url} (Requested: {privacy_status}, Actual: {actual_privacy})")
+            if channel_meta.get("channel_title") or channel_meta.get("email"):
+                logger.info(f"[YOUTUBE_CHANNEL_INFO] Uploaded to: {channel_meta.get('channel_title')} ({channel_meta.get('email')})")
+
             return PublishResult(
                 platform="youtube",
                 status=PublishStatus.PUBLISHED,
@@ -164,14 +252,28 @@ class PublisherAgent:
                 message="Video successfully uploaded to YouTube Shorts.",
                 visibility=actual_privacy,
                 is_restricted=is_restricted,
+                error_code=error_code,
+                channel_info=channel_meta,
                 units_spent=YOUTUBE_VIDEO_UPLOAD_COST
             )
         except Exception as e:
-            logger.error(f"YouTube upload failed: {e}", exc_info=True)
+            err_code, err_desc = classify_youtube_error(e)
+            logger.error(f"[YOUTUBE_UPLOAD_FAILED] Error Code: [{err_code}] - {err_desc}", exc_info=True)
+            try:
+                from pipeline.core.notifier import notifier
+                notifier.alert(
+                    f"[{err_code}] YouTube upload failed: {err_desc}",
+                    level="ERROR",
+                    extra={"error_code": err_code, "raw_error": str(e)}
+                )
+            except Exception:
+                pass
+
             return PublishResult(
                 platform="youtube",
                 status=PublishStatus.FAILED,
-                message=f"YouTube upload encountered an exception: {str(e)}",
+                error_code=err_code,
+                message=err_desc,
                 units_spent=0
             )
 
@@ -182,7 +284,7 @@ class PublisherAgent:
         description: str,
         tags: list[str],
         privacy_status: str
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Handles Google API Client initialization and resumable video upload."""
         # Attempt to load token / client secrets
         token_path = ROOT_DIR / "youtube_token.json"
@@ -194,27 +296,39 @@ class PublisherAgent:
         creds = None
         if token_path.exists():
             from google.oauth2.credentials import Credentials
-            creds = Credentials.from_authorized_user_file(str(token_path))
+            try:
+                creds = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_SCOPES)
+            except Exception as e:
+                logger.warning(f"Failed to load credentials from {token_path}: {e}")
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                from google.auth.transport.requests import Request
-                creds.refresh(Request())
-                with open(token_path, "w", encoding="utf-8") as token_file:
-                    token_file.write(creds.to_json())
+                try:
+                    from google.auth.transport.requests import Request
+                    creds.refresh(Request())
+                    with open(token_path, "w", encoding="utf-8") as token_file:
+                        token_file.write(creds.to_json())
+                    logger.info("[YOUTUBE_OAUTH] Token refreshed successfully.")
+                except Exception as ref_err:
+                    err_msg = f"[YOUTUBE_OAUTH_EXPIRED] Token refresh failed: {ref_err}"
+                    logger.error(err_msg)
+                    raise RuntimeError(err_msg) from ref_err
             elif client_secrets_path.exists():
                 from google_auth_oauthlib.flow import InstalledAppFlow
-                scopes = ["https://www.googleapis.com/auth/youtube.upload"]
-                logger.info(f"Initiating YouTube OAuth consent flow using {client_secrets_path.name}...")
-                flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), scopes)
+                logger.info(f"Initiating YouTube OAuth consent flow using {client_secrets_path.name} with expanded scopes...")
+                flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), YOUTUBE_SCOPES)
                 creds = flow.run_local_server(port=0, open_browser=True)
                 with open(token_path, "w", encoding="utf-8") as token_file:
                     token_file.write(creds.to_json())
                 logger.info(f"YouTube OAuth token generated and saved to {token_path.name}")
             else:
                 raise FileNotFoundError(
-                    f"YouTube client secrets file not found at {client_secrets_path} and no {token_path} present."
+                    f"YouTube client secrets file not found at {client_secrets_path} and no valid {token_path} present."
                 )
+
+        channel_info = get_authenticated_channel_info(creds)
+        if channel_info.get("channel_title"):
+            logger.info(f"[YOUTUBE_TARGET_CHANNEL] Channel: {channel_info['channel_title']} (ID: {channel_info.get('channel_id')}, Account: {channel_info.get('email')})")
 
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
@@ -253,7 +367,7 @@ class PublisherAgent:
             if status:
                 logger.info(f"YouTube upload progress: {int(status.progress() * 100)}%")
 
-        return response
+        return response, channel_info
 
     # =========================================================================
     # INSTAGRAM REELS PUBLISHING (RULE 6: EPHEMERAL PUBLIC HOSTING)

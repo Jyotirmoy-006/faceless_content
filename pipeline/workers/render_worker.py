@@ -48,6 +48,79 @@ class _LoggedPopen(_original_popen):
 subprocess.Popen = _LoggedPopen
 
 
+def check_nvenc_available() -> bool:
+    """Checks whether h264_nvenc encoder is available in local FFmpeg installation."""
+    try:
+        res = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=5.0)
+        return "h264_nvenc" in res.stdout
+    except Exception:
+        return False
+
+
+def build_ffmpeg_cmd(
+    video_path: Path,
+    audio_path: Optional[Path],
+    output_path: Path,
+    ass_path: Optional[Path] = None,
+    audio_duration: Optional[float] = None,
+    fps: int = 30,
+    bitrate: str = "4000k"
+) -> List[str]:
+    """Constructs the exact FFmpeg CLI command list for rendering with NVENC or libx264."""
+    use_nvenc = check_nvenc_available()
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-i", str(video_path)]
+    if audio_path and Path(audio_path).exists():
+        cmd.extend(["-i", str(audio_path)])
+        cmd.extend(["-map", "0:v:0", "-map", "1:a:0"])
+    else:
+        cmd.extend(["-map", "0:v:0", "-map", "0:a?"])
+
+    filter_complex = []
+    if ass_path and Path(ass_path).exists():
+        from pipeline.core.caption_styler import escape_ffmpeg_path
+        escaped_ass = escape_ffmpeg_path(Path(ass_path))
+        filter_complex.append(f"ass='{escaped_ass}'")
+
+    if filter_complex:
+        cmd.extend(["-vf", ",".join(filter_complex)])
+
+    cmd.extend([
+        "-g", "48",
+        "-keyint_min", "48",
+        "-sc_threshold", "0",
+        "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-movflags", "+faststart",
+        "-b:a", "128k",
+        "-ar", "48000"
+    ])
+
+    if use_nvenc:
+        cmd.extend([
+            "-c:v", "h264_nvenc",
+            "-preset", "p4",
+            "-rc", "vbr",
+            "-cq", "23",
+            "-b:v", bitrate
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "20",
+            "-b:v", bitrate
+        ])
+
+    if audio_duration:
+        cmd.extend(["-t", f"{audio_duration:.3f}"])
+
+    cmd.append(str(output_path))
+    return cmd
+
+
 def render_video(
     video_path: Path,
     audio_path: Optional[Path],
@@ -112,47 +185,50 @@ def render_video(
     else:
         print("[RENDER_WORKER] No subtitles file provided; rendering clean video without burned captions.")
 
-    print("[RENDER_WORKER] Starting h264_nvenc hardware-accelerated render...")
+    print("[RENDER_WORKER] Starting h264_nvenc hardware-accelerated render (preset: p4, rc: vbr, cq: 23)...")
+    nvenc_params = list(ffmpeg_params) + ["-rc", "vbr", "-cq", "23"]
     try:
-        video.write_videofile(
-            str(output_path),
-            fps=fps,
-            codec="h264_nvenc",
-            audio_codec="aac",
-            audio_fps=48000,
-            audio_bitrate="128k",
-            preset="fast",
-            bitrate=bitrate,
-            ffmpeg_params=ffmpeg_params,
-            logger="bar"
-        )
-    except Exception as nvenc_err:
-        print(f"[RENDER_WORKER] h264_nvenc failed ({nvenc_err}). Falling back to libx264...")
-        video.write_videofile(
-            str(output_path),
-            fps=fps,
-            codec="libx264",
-            audio_codec="aac",
-            audio_fps=48000,
-            audio_bitrate="128k",
-            preset="fast",
-            bitrate=bitrate,
-            ffmpeg_params=ffmpeg_params,
-            logger="bar"
-        )
-
-    # Explicitly close and release clip resources
-    try:
-        if video.audio:
-            video.audio.close()
-        video.close()
-    except Exception:
-        pass
-    if audio:
         try:
-            audio.close()
+            video.write_videofile(
+                str(output_path),
+                fps=fps,
+                codec="h264_nvenc",
+                audio_codec="aac",
+                audio_fps=48000,
+                audio_bitrate="128k",
+                preset="p4",
+                bitrate=bitrate,
+                ffmpeg_params=nvenc_params,
+                logger="bar"
+            )
+        except Exception as nvenc_err:
+            print(f"[RENDER_WORKER] h264_nvenc failed ({nvenc_err}). Falling back to libx264 (crf 20)...")
+            libx264_params = list(ffmpeg_params) + ["-crf", "20"]
+            video.write_videofile(
+                str(output_path),
+                fps=fps,
+                codec="libx264",
+                audio_codec="aac",
+                audio_fps=48000,
+                audio_bitrate="128k",
+                preset="veryfast",
+                bitrate=bitrate,
+                ffmpeg_params=libx264_params,
+                logger="bar"
+            )
+    finally:
+        # Explicitly close and release clip resources under all execution paths
+        try:
+            if video.audio:
+                video.audio.close()
+            video.close()
         except Exception:
             pass
+        if audio:
+            try:
+                audio.close()
+            except Exception:
+                pass
 
     elapsed = time.time() - start_time
     print(f"[RENDER_WORKER] Render completed in {elapsed:.2f}s -> {output_path}")

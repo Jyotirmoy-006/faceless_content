@@ -61,6 +61,116 @@
     .pulse-stage {
       animation: pulse-indigo 1.5s infinite ease-in-out;
     }
+    /* MISSION: Anti-Aliasing Ban (Crisp Pixel Rendering Globally) */
+    #simulation-container,
+    #simulation-container *,
+    #virtual-office-container,
+    #virtual-office-container * {
+      image-rendering: pixelated !important;
+      image-rendering: -moz-crisp-edges !important;
+      image-rendering: -webkit-crisp-edges !important;
+      image-rendering: crisp-edges !important;
+      -ms-interpolation-mode: nearest-neighbor !important;
+    }
+    #simulation-container,
+    #virtual-office-container {
+      position: relative;
+      z-index: 10;
+      isolation: isolate;
+      overflow: hidden;
+      width: 100%;
+      aspect-ratio: 1024 / 420;
+      background-image: url('/static/img/office/office_bg.png');
+      background-size: 100% 100%;
+      background-repeat: no-repeat;
+      background-position: center;
+      background-color: #09090b;
+      border-radius: 0.75rem;
+    }
+    .agent-sprite {
+      position: absolute;
+      transform: translate(-50%, -90%);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      user-select: none;
+      pointer-events: auto;
+    }
+    .agent-sprite.flip .agent-img {
+      transform: scaleX(-1);
+    }
+    .agent-img {
+      width: 5.5vw;
+      max-width: 66px;
+      min-width: 36px;
+      height: auto;
+      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.75));
+      transition: filter 0.15s ease;
+    }
+    .agent-sprite:hover .agent-img {
+      filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.85));
+    }
+    .agent-name-badge {
+      margin-top: 2px;
+      padding: 1px 4px;
+      background: rgba(9, 9, 11, 0.88);
+      border: 1px solid rgba(63, 63, 70, 0.6);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 9px;
+      font-weight: 600;
+      color: #e4e4e7;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .retro-speech-bubble {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-bottom: 6px;
+      padding: 3px 8px;
+      background: #09090b;
+      border: 2px solid #6366f1;
+      border-radius: 4px;
+      box-shadow: 2px 2px 0px #000;
+      color: #f4f4f5;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      font-size: 10px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      animation: retroBob 1.8s steps(2) infinite alternate;
+    }
+    .retro-speech-bubble::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 4px;
+      border-style: solid;
+      border-color: #6366f1 transparent transparent transparent;
+    }
+    @keyframes retroBob {
+      0% { transform: translateX(-50%) translateY(0); }
+      100% { transform: translateX(-50%) translateY(-2px); }
+    }
+    .furniture-overlay {
+      position: absolute;
+      pointer-events: none;
+      user-select: none;
+      background-size: 100% 100%;
+      background-repeat: no-repeat;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased selection:bg-indigo-500 selection:text-white flex flex-col">
@@ -144,6 +254,73 @@
     <!-- ==================================================================== -->
     <div id="tab-studio" class="tab-content space-y-6">
       
+      <!-- ==================================================================== -->
+      <!-- PIXELATED VIRTUAL STUDIO SIMULATION (Mission N — 16-bit Studio)       -->
+      <!-- ==================================================================== -->
+      <div id="virtual-studio-card" class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-sm">
+        <!-- Control / Header Bar -->
+        <div class="px-4 py-3 bg-zinc-950/80 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-mono text-[11px] font-bold">
+              <span>🎮</span>
+              <span>16-BIT VIRTUAL STUDIO</span>
+            </div>
+            <div id="studio-status-indicator" class="flex items-center gap-2 text-xs font-mono text-zinc-300">
+              <span id="studio-live-dot" class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot-emerald"></span>
+              <span id="studio-live-text">10 Agents on Duty · Idle Ambient</span>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Active Dept Tag -->
+            <span id="studio-active-dept-pill" class="px-2.5 py-1 rounded-md text-[11px] font-mono bg-zinc-900 border border-zinc-800 text-zinc-400">
+              Active Room: <span id="studio-active-dept-name" class="text-zinc-200 font-semibold">ALL DEPARTMENTS</span>
+            </span>
+
+            <!-- Demo Mode Toggle -->
+            <button id="btn-demo-mode" onclick="toggleVirtualStudioDemo()" class="px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1.5 transition-all cursor-pointer" title="Simulate agents cycling actively through production stages">
+              <span>⚡ Demo Cycle:</span>
+              <span id="demo-mode-state" class="text-zinc-400 font-bold">OFF</span>
+            </button>
+
+            <!-- SFX Toggle -->
+            <button id="btn-sfx-toggle" onclick="toggleVirtualStudioSfx()" class="px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1.5 transition-all cursor-pointer" title="Toggle 8-bit retro sound synthesizer (Web Audio API)">
+              <span id="sfx-icon">🔇</span>
+              <span>8-Bit SFX</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Straw Hat Virtual Studio Asset-Based Frame -->
+        <div class="relative bg-zinc-950 p-2 sm:p-4 overflow-hidden flex flex-col items-center">
+          <div id="simulation-container" class="relative z-[1] isolate w-full max-w-5xl overflow-hidden rounded-xl border border-zinc-800 shadow-2xl select-none" style="z-index: 1; isolation: isolate; aspect-ratio: 1024 / 420; background-image: url('/static/img/office/office_bg.png'); background-size: 100% 100%; background-repeat: no-repeat; background-position: center; background-color: #09090b;">
+            <!-- Straw Hat Agent Sprites dynamically injected here -->
+          </div>
+
+          <!-- Department Floor Legend / Quick Telemetry Ribbon -->
+          <div class="w-full max-w-5xl grid grid-cols-2 md:grid-cols-4 gap-2 pt-2.5 text-[10px] font-mono text-zinc-400">
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/70 border border-zinc-800/70">
+              <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+              <span class="truncate"><strong class="text-zinc-300">Executive Suite:</strong> Luffy (Orchestrator)</span>
+            </div>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/70 border border-zinc-800/70">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span class="truncate"><strong class="text-zinc-300">Strategy Dept:</strong> Nami, Usopp, Robin</span>
+            </div>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/70 border border-zinc-800/70">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span class="truncate"><strong class="text-zinc-300">GPU Engine Room:</strong> Franky, Zoro, Jinbe</span>
+            </div>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/70 border border-zinc-800/70">
+              <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+              <span class="truncate"><strong class="text-zinc-300">QA & Sound Booth:</strong> Brook, Sanji, Chopper</span>
+            </div>
+          </div>
+          <p class="text-[10px] font-mono text-zinc-500 pt-1 text-center">💡 Tip: Click any Straw Hat crew member to inspect their active neural trace, assigned LLM, and cognitive state.</p>
+        </div>
+      </div>
+
       <!-- LIVE TELEMETRY STAGE STEPPER (Top Banner) -->
       <div id="stepper-card" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -537,7 +714,7 @@
   </main>
 
   <!-- HTML5 VIDEO MODAL PREVIEW -->
-  <div id="video-preview-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
+  <div id="video-preview-modal" style="z-index: 99999;" class="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col">
       <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
         <h3 id="modal-video-title" class="text-xs font-bold font-mono text-zinc-200 truncate">Video Preview</h3>
@@ -568,7 +745,7 @@
   </div>
 
   <!-- AGENTIC SIMULATION INSPECTOR MODAL (MISSION M) -->
-  <div id="simulation-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-2 sm:p-4">
+  <div id="simulation-modal" style="z-index: 99999;" class="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-2 sm:p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden shadow-2xl flex flex-col">
       
       <!-- Modal Header -->
@@ -655,7 +832,7 @@
   </div>
 
   <!-- TEXT / TRANSCRIPT PREVIEW MODAL -->
-  <div id="text-preview-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
+  <div id="text-preview-modal" style="z-index: 99999;" class="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
       <div class="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
         <h3 id="modal-text-title" class="text-xs font-bold font-mono text-zinc-200 truncate">Asset Content</h3>
@@ -667,6 +844,53 @@
       <div class="p-3 bg-zinc-950 border-t border-zinc-800 text-[11px] font-mono text-zinc-500 flex justify-between items-center">
         <span id="modal-text-meta">Text Artifact</span>
         <button onclick="copyTextModalContent()" class="text-indigo-400 hover:underline">Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AGENT DOSSIER / INSPECTOR MODAL (Mission N) -->
+  <div id="agent-inspector-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4" style="z-index: 99999;">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 font-mono">
+      <div class="flex items-start justify-between border-b border-zinc-800 pb-3">
+        <div class="flex items-center gap-3">
+          <img id="inspector-avatar-img" src="/static/img/office/luffy.png" alt="Avatar" class="w-14 h-14 rounded-lg bg-zinc-950 border border-zinc-800 object-contain p-1 shadow-inner" style="image-rendering: pixelated;">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 id="inspector-name" class="text-sm font-bold text-zinc-100 uppercase tracking-wide">Agent Name</h3>
+              <span id="inspector-role-badge" class="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">ROLE</span>
+            </div>
+            <p id="inspector-dept" class="text-xs text-zinc-400">Department Name</p>
+          </div>
+        </div>
+        <button onclick="closeAgentInspector()" class="text-zinc-400 hover:text-white p-1 text-lg leading-none cursor-pointer">&times;</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+          <div class="text-[10px] text-zinc-500 uppercase">Engine / Model</div>
+          <div id="inspector-engine" class="font-bold text-emerald-400 truncate">gemini-3.1-pro-preview</div>
+        </div>
+        <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+          <div class="text-[10px] text-zinc-500 uppercase">Current State</div>
+          <div id="inspector-state" class="font-bold text-indigo-400">IDLE (Sipping Coffee)</div>
+        </div>
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-400">
+          <span>Active Cognitive Trace / Prompt Snippet</span>
+          <button onclick="copyInspectorTrace()" class="text-indigo-400 hover:underline cursor-pointer">Copy</button>
+        </div>
+        <div id="inspector-trace" class="bg-zinc-950 p-3 rounded border border-zinc-800 text-[11px] text-zinc-300 max-h-40 overflow-y-auto custom-scroll leading-relaxed whitespace-pre-wrap select-text">
+          Awaiting next production cycle...
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-2 border-t border-zinc-800 text-xs">
+        <span class="text-[11px] text-zinc-500">Telemetry: SQLite simulation_steps</span>
+        <button onclick="closeAgentInspector()" class="px-4 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold cursor-pointer">
+          Dismiss
+        </button>
       </div>
     </div>
   </div>
@@ -833,6 +1057,11 @@
 
         // 3. Update Stepper with active running job
         updateStepperUI(data.running_job);
+
+        // 4. Update 16-bit Virtual Studio Simulation (Mission N)
+        if (window.VirtualStudio && typeof window.VirtualStudio.updateFromPipeline === 'function') {
+          window.VirtualStudio.updateFromPipeline(data.running_job, data);
+        }
 
       } catch (err) {
         console.error('fetchSystemState error:', err);
@@ -2038,6 +2267,800 @@
       }
     }
 
+    // =========================================================================
+    // MISSION: TRUE PIXEL-PERFECT 2D ISOMETRIC GAME ENGINE
+    // requestAnimationFrame 60fps loop · Linear Pathing · Dynamic Y-Sorting · Live Telemetry
+    // =========================================================================
+
+    const VirtualStudio = {
+      container: null,
+      animId: null,
+      lastTimestamp: 0,
+      demoMode: false,
+      demoStep: 0,
+      demoTimer: null,
+      sfxEnabled: false,
+      audioCtx: null,
+      pollTimer: null,
+      lastJobStage: null,
+      lastJobId: null,
+
+      // Walkable Waypoints Graph (1024x420 Isometric Coordinate System)
+      NODES: {
+        // Top Floor - Captain Quarters
+        'cap_map': { x: 115, y: 220, zone: 'executive' },
+        'cap_desk': { x: 240, y: 140, zone: 'executive', isDesk: true },
+        'cap_front': { x: 240, y: 215, zone: 'executive' },
+        'cap_door': { x: 290, y: 235, zone: 'executive' },
+
+        // Top Floor - Central Bridge
+        'bridge_left': { x: 350, y: 240, zone: 'bridge' },
+        'bridge_mid': { x: 440, y: 260, zone: 'bridge' },
+        'bridge_right': { x: 530, y: 250, zone: 'bridge' },
+
+        // Top Floor - Strategy Room
+        'strat_aisle_1': { x: 416, y: 215, zone: 'strategy' },
+        'strat_aisle_2': { x: 510, y: 215, zone: 'strategy' },
+        'strat_aisle_3': { x: 602, y: 215, zone: 'strategy' },
+        'nami_desk': { x: 416, y: 162, zone: 'strategy', isDesk: true },
+        'usopp_desk': { x: 510, y: 162, zone: 'strategy', isDesk: true },
+        'robin_desk': { x: 602, y: 162, zone: 'strategy', isDesk: true },
+
+        // Top Floor - QA & Sound Booth
+        'qa_aisle_left': { x: 680, y: 210, zone: 'qa' },
+        'qa_aisle_mid': { x: 742, y: 205, zone: 'qa' },
+        'qa_aisle_right': { x: 810, y: 210, zone: 'qa' },
+        'brook_desk': { x: 742, y: 140, zone: 'qa', isDesk: true },
+        'sanji_desk': { x: 810, y: 175, zone: 'qa', isDesk: true },
+        'stairs_top': { x: 700, y: 230, zone: 'connector' },
+
+        // Connectors (Upper to Lower Deck)
+        'ramp_top': { x: 460, y: 270, zone: 'connector' },
+        'ramp_mid': { x: 475, y: 305, zone: 'connector' },
+        'ramp_bot': { x: 490, y: 345, zone: 'connector' },
+        'stairs_bot': { x: 700, y: 275, zone: 'connector' },
+
+        // Bottom Floor - Left Lobby & Doorway
+        'doorway': { x: 80, y: 350, zone: 'lobby', isSpawn: true },
+        'lower_chest': { x: 120, y: 350, zone: 'lobby' },
+        'water_left': { x: 180, y: 350, zone: 'lobby' },
+        'lower_desk': { x: 240, y: 350, zone: 'lobby' },
+        'arch_left': { x: 310, y: 350, zone: 'lobby' },
+        'water_right': { x: 410, y: 350, zone: 'lobby' },
+        'lower_center': { x: 490, y: 350, zone: 'lobby' },
+
+        // Bottom Floor - GPU Engine Room & Production
+        'engine_aisle_1': { x: 540, y: 350, zone: 'gpu' },
+        'engine_aisle_2': { x: 630, y: 350, zone: 'gpu' },
+        'engine_aisle_3': { x: 720, y: 350, zone: 'gpu' },
+        'engine_aisle_4': { x: 790, y: 350, zone: 'gpu' },
+        'server_front': { x: 615, y: 310, zone: 'gpu' },
+        'franky_desk': { x: 575, y: 325, zone: 'gpu', isDesk: true },
+        'zoro_desk': { x: 675, y: 310, zone: 'gpu', isDesk: true },
+        'chopper_desk': { x: 765, y: 275, zone: 'gpu', isDesk: true },
+        'jinbe_desk': { x: 720, y: 380, zone: 'gpu', isDesk: true }
+      },
+
+      // Connected Edges for Isometric Navigation
+      EDGES: [
+        ['cap_map', 'cap_front'], ['cap_front', 'cap_desk'], ['cap_front', 'cap_door'], ['cap_door', 'bridge_left'],
+        ['bridge_left', 'bridge_mid'], ['bridge_mid', 'bridge_right'], ['bridge_mid', 'ramp_top'],
+        ['ramp_top', 'ramp_mid'], ['ramp_mid', 'ramp_bot'], ['ramp_bot', 'lower_center'],
+        ['bridge_left', 'strat_aisle_1'], ['bridge_mid', 'strat_aisle_2'], ['bridge_right', 'strat_aisle_3'],
+        ['strat_aisle_1', 'strat_aisle_2'], ['strat_aisle_2', 'strat_aisle_3'],
+        ['strat_aisle_1', 'nami_desk'], ['strat_aisle_2', 'usopp_desk'], ['strat_aisle_3', 'robin_desk'],
+        ['bridge_right', 'qa_aisle_left'], ['qa_aisle_left', 'qa_aisle_mid'], ['qa_aisle_mid', 'qa_aisle_right'],
+        ['qa_aisle_mid', 'brook_desk'], ['qa_aisle_right', 'sanji_desk'], ['qa_aisle_left', 'stairs_top'],
+        ['stairs_top', 'stairs_bot'], ['stairs_bot', 'chopper_desk'], ['stairs_bot', 'engine_aisle_3'],
+        ['doorway', 'lower_chest'], ['lower_chest', 'water_left'], ['water_left', 'lower_desk'],
+        ['lower_desk', 'arch_left'], ['arch_left', 'water_right'], ['water_right', 'lower_center'],
+        ['lower_center', 'engine_aisle_1'], ['engine_aisle_1', 'engine_aisle_2'], ['engine_aisle_2', 'engine_aisle_3'], ['engine_aisle_3', 'engine_aisle_4'],
+        ['engine_aisle_1', 'franky_desk'], ['engine_aisle_2', 'server_front'], ['engine_aisle_2', 'zoro_desk'],
+        ['engine_aisle_3', 'chopper_desk'], ['engine_aisle_3', 'jinbe_desk'], ['engine_aisle_4', 'jinbe_desk']
+      ],
+
+      // Fixed Occlusion Foreground Cutouts (Y-Sort Depth Occlusion)
+      FURNITURE_OVERLAYS: [
+        { name: 'desk_captain', src: '/static/img/office/desk_captain.png', x: 165, y: 75, w: 145, h: 130, sortY: 195 },
+        { name: 'desk_qa', src: '/static/img/office/desk_qa.png', x: 755, y: 145, w: 90, h: 70, sortY: 195 },
+        { name: 'server_rack', src: '/static/img/office/server_rack.png', x: 595, y: 235, w: 45, h: 70, sortY: 295 },
+        { name: 'desk_franky', src: '/static/img/office/desk_franky.png', x: 535, y: 305, w: 80, h: 60, sortY: 350 },
+        { name: 'desk_zoro', src: '/static/img/office/desk_zoro.png', x: 635, y: 290, w: 80, h: 60, sortY: 335 },
+        { name: 'desk_chopper', src: '/static/img/office/desk_chopper.png', x: 715, y: 255, w: 80, h: 55, sortY: 295 },
+        { name: 'desk_jinbe', src: '/static/img/office/desk_jinbe.png', x: 675, y: 355, w: 85, h: 60, sortY: 395 }
+      ],
+
+      ADJACENCY: {},
+
+      // 10 Straw Hat Autonomous Agents
+      agents: [
+        {
+          id: 'luffy',
+          name: 'Monkey D. Luffy',
+          crewRole: 'The Captain',
+          role: 'Main Orchestrator',
+          dept: 'The Executive Suite',
+          engine: 'Rule 7 System Scheduler / Orchestrator',
+          deskNode: 'cap_desk',
+          x: 240, y: 140,
+          state: 'IDLE', // 'IDLE', 'EXECUTING'
+          thought: 'Setting sail! Coordinating Straw Hat crew...',
+          icon: '👑',
+          path: [],
+          wanderTimer: 4.5,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'nami',
+          name: 'Nami',
+          crewRole: 'The Navigator',
+          role: 'The Strategist',
+          dept: 'Strategy & Story Dept',
+          engine: 'Claude 3.5 Sonnet (Audience Retention & Hooks)',
+          deskNode: 'nami_desk',
+          x: 416, y: 162,
+          state: 'IDLE',
+          thought: 'Charting viral route & retention curve...',
+          icon: '🗺️',
+          path: [],
+          wanderTimer: 5.2,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'usopp',
+          name: 'Usopp',
+          crewRole: 'The Sniper / Inventor',
+          role: 'Creative Director',
+          dept: 'Strategy & Story Dept',
+          engine: 'Gemini 1.5 Pro (Story Beats & Ideation)',
+          deskNode: 'usopp_desk',
+          x: 510, y: 162,
+          state: 'IDLE',
+          thought: 'Crafting legendary tales with explosive hooks...',
+          icon: '🎯',
+          path: [],
+          wanderTimer: 6.1,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'robin',
+          name: 'Nico Robin',
+          crewRole: 'The Archaeologist',
+          role: 'The Copywriter',
+          dept: 'Strategy & Story Dept',
+          engine: 'Claude 3.5 Sonnet (Scriptwriting & Micro-Pacing)',
+          deskNode: 'robin_desk',
+          x: 602, y: 162,
+          state: 'IDLE',
+          thought: 'Deciphering historical retention patterns...',
+          icon: '📜',
+          path: [],
+          wanderTimer: 7.0,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'brook',
+          name: 'Brook',
+          crewRole: 'The Musician',
+          role: 'Voice Actor',
+          dept: 'Audio & Sound Booth',
+          engine: 'Piper TTS Neural Voice Synthesizer',
+          deskNode: 'brook_desk',
+          x: 742, y: 140,
+          state: 'IDLE',
+          thought: 'Yo-ho-ho! Synthesizing neural voiceover WAV...',
+          icon: '🎙️',
+          path: [],
+          wanderTimer: 4.8,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'franky',
+          name: 'Franky',
+          crewRole: 'The Shipwright',
+          role: 'Art Director',
+          dept: 'GPU Engine Room',
+          engine: 'ComfyUI SDXL Supercharged Worker',
+          deskNode: 'franky_desk',
+          x: 575, y: 325,
+          state: 'IDLE',
+          thought: 'SUPER! Generating SDXL visual keyframes...',
+          icon: '⚡',
+          path: [],
+          wanderTimer: 5.5,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'zoro',
+          name: 'Roronoa Zoro',
+          crewRole: 'The Combatant',
+          role: 'The Editor',
+          dept: 'GPU Engine Room',
+          engine: 'FFmpeg Hardware Accelerated Video Assembly',
+          deskNode: 'zoro_desk',
+          x: 675, y: 310,
+          state: 'IDLE',
+          thought: 'Three-Sword Style! Slicing cuts & burning kinetic subs...',
+          icon: '⚔️',
+          path: [],
+          wanderTimer: 4.2,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'sanji',
+          name: 'Sanji',
+          crewRole: 'The Cook',
+          role: 'Chief Critic & QA',
+          dept: 'QA & Compliance',
+          engine: 'Claude 3.5 Sonnet (Strict Content Audit)',
+          deskNode: 'sanji_desk',
+          x: 810, y: 175,
+          state: 'IDLE',
+          thought: 'Refusing substandard content. Inspecting...',
+          icon: '🍳',
+          path: [],
+          wanderTimer: 6.5,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'chopper',
+          name: 'Tony Tony Chopper',
+          crewRole: 'The Doctor',
+          role: 'Compliance Officer',
+          dept: 'QA & Compliance',
+          engine: 'YouTube TOS & Safety Compliance Verification',
+          deskNode: 'chopper_desk',
+          x: 765, y: 275,
+          state: 'IDLE',
+          thought: 'Checking video health & copyright safety...',
+          icon: '💊',
+          path: [],
+          wanderTimer: 5.0,
+          flip: false,
+          speed: 80
+        },
+        {
+          id: 'jinbe',
+          name: 'Jinbe',
+          crewRole: 'The Helmsman',
+          role: 'The Publisher',
+          dept: 'GPU Engine Room / Distribution',
+          engine: 'YouTube Data API v3 Secure Upload Service',
+          deskNode: 'jinbe_desk',
+          x: 720, y: 380,
+          state: 'IDLE',
+          thought: 'Navigating current to YouTube servers with SEO tags...',
+          icon: '🌊',
+          path: [],
+          wanderTimer: 7.2,
+          flip: false,
+          speed: 80
+        }
+      ],
+
+      init() {
+        this.container = document.getElementById('simulation-container') || document.getElementById('virtual-office-container');
+        if (!this.container) return;
+
+        // Build Graph Adjacency
+        this.ADJACENCY = {};
+        for (const k of Object.keys(this.NODES)) {
+          this.ADJACENCY[k] = [];
+        }
+        for (const [u, v] of this.EDGES) {
+          if (this.ADJACENCY[u] && this.ADJACENCY[v]) {
+            this.ADJACENCY[u].push(v);
+            this.ADJACENCY[v].push(u);
+          }
+        }
+
+        // Initialize Scene Elements
+        this.renderScene();
+
+        // Start 60fps Game Loop
+        this.lastTimestamp = performance.now();
+        if (this.animId) cancelAnimationFrame(this.animId);
+        const loop = (ts) => {
+          this.updateGameLoop(ts);
+          this.animId = requestAnimationFrame(loop);
+        };
+        this.animId = requestAnimationFrame(loop);
+
+        // Start Live Telemetry Poller (every 1500ms)
+        this.startTelemetryPoller();
+      },
+
+      renderScene() {
+        if (!this.container) return;
+        this.container.innerHTML = '';
+
+        // 1. Inject Furniture Overlays (Y-Sort Depth Obstacles)
+        this.FURNITURE_OVERLAYS.forEach(f => {
+          const el = document.createElement('div');
+          el.className = 'furniture-overlay';
+          el.style.left = (f.x / 10.24) + '%';
+          el.style.top = (f.y / 4.2) + '%';
+          el.style.width = (f.w / 10.24) + '%';
+          el.style.height = (f.h / 4.2) + '%';
+          el.style.zIndex = f.sortY;
+          el.style.backgroundImage = `url('${f.src}')`;
+          this.container.appendChild(el);
+        });
+
+        // 2. Inject Agent DOM Elements
+        this.agents.forEach(agent => {
+          const el = document.createElement('div');
+          el.id = `agent-sprite-${agent.id}`;
+          el.className = 'agent-sprite';
+          el.style.left = (agent.x / 10.24) + '%';
+          el.style.top = (agent.y / 4.2) + '%';
+          el.style.zIndex = Math.floor(agent.y);
+          el.onclick = () => this.inspectAgent(agent.id);
+
+          el.innerHTML = `
+            <div id="thought-bubble-${agent.id}" class="retro-speech-bubble hidden">
+              <span>${agent.icon}</span>
+              <span id="thought-text-${agent.id}">${agent.thought}</span>
+            </div>
+            <img id="agent-img-${agent.id}"
+                 src="/static/img/office/${agent.id}.png"
+                 alt="${agent.name}"
+                 class="agent-img"
+                 draggable="false" />
+            <div class="agent-name-badge">
+              <span id="agent-dot-${agent.id}" class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span>
+              <span>${agent.name.split(' ')[0]}</span>
+            </div>
+          `;
+          this.container.appendChild(el);
+          agent.element = el;
+          agent.imgElement = el.querySelector(`#agent-img-${agent.id}`);
+          agent.bubbleElement = el.querySelector(`#thought-bubble-${agent.id}`);
+          agent.thoughtTextElement = el.querySelector(`#thought-text-${agent.id}`);
+          agent.dotElement = el.querySelector(`#agent-dot-${agent.id}`);
+          agent.currentNode = agent.deskNode;
+        });
+      },
+
+      // BFS Shortest Path Algorithm on Walkable Nodes Graph
+      findPath(startKey, targetKey) {
+        if (startKey === targetKey) return [targetKey];
+        const queue = [[startKey]];
+        const visited = new Set([startKey]);
+
+        while (queue.length > 0) {
+          const path = queue.shift();
+          const curr = path[path.length - 1];
+          const neighbors = this.ADJACENCY[curr] || [];
+
+          for (const next of neighbors) {
+            if (next === targetKey) {
+              return [...path, next];
+            }
+            if (!visited.has(next)) {
+              visited.add(next);
+              queue.push([...path, next]);
+            }
+          }
+        }
+        return [targetKey];
+      },
+
+      getClosestNode(x, y) {
+        let bestKey = 'doorway';
+        let bestDist = Infinity;
+        for (const [k, pt] of Object.entries(this.NODES)) {
+          const d = Math.hypot(pt.x - x, pt.y - y);
+          if (d < bestDist) {
+            bestDist = d;
+            bestKey = k;
+          }
+        }
+        return bestKey;
+      },
+
+      // 60FPS GAME LOOP (Linear Movement & Dynamic Y-Sorting)
+      updateGameLoop(timestamp) {
+        const dt = Math.min((timestamp - this.lastTimestamp) / 1000, 0.1);
+        this.lastTimestamp = timestamp;
+
+        for (const agent of this.agents) {
+          // 1. Waypoint Path Following (Linear Constant Speed)
+          if (agent.path && agent.path.length > 0) {
+            const nextNodeKey = agent.path[0];
+            const target = this.NODES[nextNodeKey];
+            if (target) {
+              const dx = target.x - agent.x;
+              const dy = target.y - agent.y;
+              const dist = Math.hypot(dx, dy);
+              const step = agent.speed * dt;
+
+              if (dist <= step) {
+                agent.x = target.x;
+                agent.y = target.y;
+                agent.currentNode = agent.path.shift();
+
+                // Reached final waypoint
+                if (agent.path.length === 0 && agent.onArrival) {
+                  const cb = agent.onArrival;
+                  agent.onArrival = null;
+                  cb();
+                }
+              } else {
+                const vx = (dx / dist) * agent.speed;
+                const vy = (dy / dist) * agent.speed;
+                agent.x += vx * dt;
+                agent.y += vy * dt;
+
+                // Directional Sprite Flip based on X velocity
+                if (vx < -2) {
+                  agent.flip = true;
+                } else if (vx > 2) {
+                  agent.flip = false;
+                }
+              }
+            }
+          } else if (agent.state === 'IDLE' && !this.demoMode) {
+            // 2. Idle Wandering AI (pick nearby node within ~65px)
+            agent.wanderTimer -= dt;
+            if (agent.wanderTimer <= 0) {
+              agent.wanderTimer = 4.0 + Math.random() * 6.0;
+              this.wanderAgent(agent);
+            }
+          }
+
+          // 3. DYNAMIC DEPTH SORTING (The Mandatory Y-Sort Requirement)
+          if (agent.element) {
+            agent.element.style.left = (agent.x / 10.24) + '%';
+            agent.element.style.top = (agent.y / 4.2) + '%';
+            agent.element.style.zIndex = Math.floor(agent.y);
+
+            if (agent.flip) {
+              agent.element.classList.add('flip');
+            } else {
+              agent.element.classList.remove('flip');
+            }
+          }
+        }
+      },
+
+      wanderAgent(agent) {
+        const curr = agent.currentNode || this.getClosestNode(agent.x, agent.y);
+        const neighbors = this.ADJACENCY[curr] || [];
+
+        // Filter valid wander destinations (avoid other agents' reserved desks)
+        const deskNodes = new Set(this.agents.filter(a => a.id !== agent.id).map(a => a.deskNode));
+        const candidates = neighbors.filter(k => !deskNodes.has(k));
+
+        if (candidates.length > 0) {
+          const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+          agent.path = [chosen];
+          agent.onArrival = () => {
+            // Ambient pause upon arrival
+          };
+        }
+      },
+
+      navigateToDesk(agentId, callback) {
+        const agent = this.agents.find(a => a.id === agentId);
+        if (!agent) return;
+
+        agent.state = 'EXECUTING';
+        const start = agent.currentNode || this.getClosestNode(agent.x, agent.y);
+        const fullPath = this.findPath(start, agent.deskNode);
+        agent.path = fullPath.slice(1);
+
+        agent.onArrival = () => {
+          if (callback) callback();
+        };
+      },
+
+      setAgentWorking(agentId, thoughtText) {
+        const agent = this.agents.find(a => a.id === agentId);
+        if (!agent) return;
+
+        agent.state = 'EXECUTING';
+        if (agent.imgElement) {
+          agent.imgElement.src = `/static/img/office/${agent.id}_working.gif`;
+        }
+        if (agent.dotElement) {
+          agent.dotElement.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse';
+        }
+        if (agent.bubbleElement && agent.thoughtTextElement) {
+          const text = thoughtText || agent.thought;
+          agent.thoughtTextElement.textContent = text.length > 42 ? text.slice(0, 39) + '...' : text;
+          agent.bubbleElement.classList.remove('hidden');
+        }
+        this.updateActiveDeptTag(agent.dept.toUpperCase());
+        this.playTypewriter();
+      },
+
+      setAgentIdle(agentId) {
+        const agent = this.agents.find(a => a.id === agentId);
+        if (!agent) return;
+
+        agent.state = 'IDLE';
+        if (agent.imgElement) {
+          agent.imgElement.src = `/static/img/office/${agent.id}.png`;
+        }
+        if (agent.dotElement) {
+          agent.dotElement.className = 'w-1.5 h-1.5 rounded-full bg-zinc-500';
+        }
+        if (agent.bubbleElement) {
+          agent.bubbleElement.classList.add('hidden');
+        }
+      },
+
+      resetAllIdle() {
+        this.agents.forEach(a => {
+          this.setAgentIdle(a.id);
+          // Return to desk if displaced
+          if (a.currentNode !== a.deskNode && (!a.path || a.path.length === 0)) {
+            const start = a.currentNode || this.getClosestNode(a.x, a.y);
+            a.path = this.findPath(start, a.deskNode).slice(1);
+          }
+        });
+        this.updateActiveDeptTag('ALL DEPARTMENTS');
+      },
+
+      updateActiveDeptTag(deptText) {
+        const el = document.getElementById('studio-active-dept-name');
+        if (el) el.textContent = deptText;
+      },
+
+      startDemoCycle() {
+        this.demoMode = true;
+        this.demoStep = 0;
+        const stateEl = document.getElementById('demo-mode-state');
+        if (stateEl) {
+          stateEl.textContent = 'ON';
+          stateEl.className = 'text-emerald-400 font-bold';
+        }
+        const btn = document.getElementById('btn-demo-mode');
+        if (btn) {
+          btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center gap-1.5 transition-all cursor-pointer';
+        }
+        this.resetAllIdle();
+        this.playChime();
+        this.runNextDemoStep();
+      },
+
+      stopDemoCycle() {
+        this.demoMode = false;
+        if (this.demoTimer) clearTimeout(this.demoTimer);
+        const stateEl = document.getElementById('demo-mode-state');
+        if (stateEl) {
+          stateEl.textContent = 'OFF';
+          stateEl.className = 'text-zinc-400 font-bold';
+        }
+        const btn = document.getElementById('btn-demo-mode');
+        if (btn) {
+          btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1.5 transition-all cursor-pointer';
+        }
+        this.resetAllIdle();
+      },
+
+      runNextDemoStep() {
+        if (!this.demoMode) return;
+        const sequence = ['luffy', 'nami', 'usopp', 'robin', 'brook', 'franky', 'zoro', 'sanji', 'chopper', 'jinbe'];
+        const currentAgentId = sequence[this.demoStep % sequence.length];
+        const prevAgentId = sequence[(this.demoStep - 1 + sequence.length) % sequence.length];
+
+        if (this.demoStep > 0) {
+          this.setAgentIdle(prevAgentId);
+        }
+
+        const agent = this.agents.find(a => a.id === currentAgentId);
+        this.navigateToDesk(currentAgentId, () => {
+          if (!this.demoMode) return;
+          this.setAgentWorking(currentAgentId, agent.thought);
+          this.demoTimer = setTimeout(() => {
+            this.demoStep++;
+            this.runNextDemoStep();
+          }, 3800);
+        });
+      },
+
+      startTelemetryPoller() {
+        if (this.pollTimer) clearInterval(this.pollTimer);
+        this.pollTimer = setInterval(() => {
+          if (this.demoMode) return;
+          this.pollTelemetry();
+        }, 1500);
+      },
+
+      async pollTelemetry() {
+        try {
+          const sysRes = await fetch('/api/system');
+          const sysData = await sysRes.json();
+          const runningJobs = (sysData.queue || []).filter(q => q.status === 'RUNNING' || q.status === 'PROCESSING');
+          const activeJob = runningJobs[0];
+
+          if (!activeJob) {
+            if (this.lastJobStage !== null) {
+              this.resetAllIdle();
+              this.lastJobStage = null;
+              this.lastJobId = null;
+            }
+            return;
+          }
+
+          const stage = (activeJob.stage || '').toLowerCase();
+          const jobId = activeJob.id;
+
+          // Fetch granular simulation execution steps to extract live LLM reasoning_trace
+          let liveTraceText = `${stage.toUpperCase()}: Active execution trace`;
+          try {
+            const simRes = await fetch(`/api/jobs/${jobId}/simulation`);
+            if (simRes.ok) {
+              const simData = await simRes.json();
+              const steps = simData.trace || [];
+              if (steps.length > 0) {
+                const latestStep = steps[steps.length - 1];
+                if (latestStep.reasoning_trace) {
+                  liveTraceText = latestStep.reasoning_trace;
+                }
+              }
+            }
+          } catch (err) {}
+
+          if (stage === this.lastJobStage && jobId === this.lastJobId) {
+            // Update active thought bubble text dynamically
+            const activeAgent = this.agents.find(a => a.state === 'EXECUTING');
+            if (activeAgent && activeAgent.thoughtTextElement) {
+              activeAgent.thoughtTextElement.textContent = liveTraceText.length > 42 ? liveTraceText.slice(0, 39) + '...' : liveTraceText;
+            }
+            return;
+          }
+
+          this.lastJobStage = stage;
+          this.lastJobId = jobId;
+
+          // Map pipeline stage to Straw Hat role
+          let targetAgentId = 'luffy';
+          if (stage.includes('strat') || stage.includes('research')) targetAgentId = 'nami';
+          else if (stage.includes('idea') || stage.includes('concept')) targetAgentId = 'usopp';
+          else if (stage.includes('script') || stage.includes('write')) targetAgentId = 'robin';
+          else if (stage.includes('voice') || stage.includes('audio') || stage.includes('tts')) targetAgentId = 'brook';
+          else if (stage.includes('image') || stage.includes('art') || stage.includes('visual')) targetAgentId = 'franky';
+          else if (stage.includes('render') || stage.includes('edit') || stage.includes('video')) targetAgentId = 'zoro';
+          else if (stage.includes('critic') || stage.includes('qa')) targetAgentId = 'sanji';
+          else if (stage.includes('compliance') || stage.includes('legal')) targetAgentId = 'chopper';
+          else if (stage.includes('publish') || stage.includes('upload')) targetAgentId = 'jinbe';
+
+          this.resetAllIdle();
+          this.navigateToDesk(targetAgentId, () => {
+            this.setAgentWorking(targetAgentId, liveTraceText);
+          });
+        } catch (e) {
+          // Ambient polling fallback
+        }
+      },
+
+      inspectAgent(agentId) {
+        const agent = this.agents.find(a => a.id === agentId);
+        if (!agent) return;
+
+        const modal = document.getElementById('agent-inspector-modal');
+        const img = document.getElementById('inspector-avatar-img');
+        const nameEl = document.getElementById('inspector-name');
+        const badgeEl = document.getElementById('inspector-role-badge');
+        const deptEl = document.getElementById('inspector-dept');
+        const engineEl = document.getElementById('inspector-engine');
+        const stateEl = document.getElementById('inspector-state');
+        const traceEl = document.getElementById('inspector-trace');
+
+        if (img) img.src = `/static/img/office/${agent.id}.png`;
+        if (nameEl) nameEl.textContent = `${agent.name} (${agent.crewRole})`;
+        if (badgeEl) badgeEl.textContent = agent.role.toUpperCase();
+        if (deptEl) deptEl.textContent = agent.dept;
+        if (engineEl) engineEl.textContent = agent.engine;
+        if (stateEl) {
+          stateEl.textContent = agent.state === 'EXECUTING' ? 'EXECUTING (Active Pipeline Stage)' : 'IDLE (Ambient Roaming)';
+          stateEl.className = agent.state === 'EXECUTING' ? 'font-bold text-emerald-400' : 'font-bold text-indigo-400';
+        }
+        if (traceEl) {
+          traceEl.textContent = `[${agent.role.toUpperCase()}] Straw Hat Simulation State:
+${agent.thought}
+
+Assigned Engine: ${agent.engine}
+Studio Department: ${agent.dept}
+Crew Role: ${agent.crewRole}
+Current Position: (${Math.round(agent.x)}, ${Math.round(agent.y)})
+Desk Waypoint: ${agent.deskNode}
+Y-Sort Depth Layer: z-index ${Math.floor(agent.y)} (occluded behind desk overlays if y < deskY)`;
+        }
+
+        if (modal) modal.classList.remove('hidden');
+        this.playChime();
+      },
+
+      play8BitTone(freq, duration = 0.08, type = 'square', vol = 0.06) {
+        if (!this.sfxEnabled) return;
+        try {
+          if (!this.audioCtx) {
+            const AudioClass = window.AudioContext || window.webkitAudioContext;
+            this.audioCtx = new AudioClass();
+          }
+          if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+          }
+          const osc = this.audioCtx.createOscillator();
+          const gain = this.audioCtx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
+          gain.gain.setValueAtTime(vol, this.audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, this.audioCtx.currentTime + duration);
+          osc.connect(gain);
+          gain.connect(this.audioCtx.destination);
+          osc.start();
+          osc.stop(this.audioCtx.currentTime + duration);
+        } catch (e) {}
+      },
+
+      playChime() {
+        this.play8BitTone(523.25, 0.08, 'triangle', 0.08);
+        setTimeout(() => this.play8BitTone(659.25, 0.08, 'triangle', 0.08), 80);
+        setTimeout(() => this.play8BitTone(783.99, 0.12, 'triangle', 0.08), 160);
+      },
+
+      playTypewriter() {
+        this.play8BitTone(440 + Math.random() * 200, 0.03, 'sine', 0.04);
+      },
+
+      updateFromPipeline(runningJob, fullData) {
+        if (this.demoMode) return;
+        this.pollTelemetry();
+      }
+    };
+
+    window.VirtualStudio = VirtualStudio;
+
+    // Global Modal & Control Helpers for Virtual Studio
+    function toggleVirtualStudioDemo() {
+      if (VirtualStudio.demoMode) {
+        VirtualStudio.stopDemoCycle();
+      } else {
+        VirtualStudio.startDemoCycle();
+      }
+    }
+
+    function toggleVirtualStudioSfx() {
+      VirtualStudio.sfxEnabled = !VirtualStudio.sfxEnabled;
+      const icon = document.getElementById('sfx-icon');
+      const btn = document.getElementById('btn-sfx-toggle');
+      if (VirtualStudio.sfxEnabled) {
+        icon.textContent = '🔊';
+        btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 transition-all cursor-pointer';
+        VirtualStudio.playChime();
+      } else {
+        icon.textContent = '🔇';
+        btn.className = 'px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1.5 transition-all cursor-pointer';
+      }
+    }
+
+    function closeAgentInspector() {
+      const modal = document.getElementById('agent-inspector-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function copyInspectorTrace() {
+      const el = document.getElementById('inspector-trace');
+      if (el) {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          showToast('Cognitive trace copied to clipboard.', 'success');
+        });
+      }
+    }
+
     // Auto-Scroll Toggle Listener
     document.getElementById('autoscroll-toggle').addEventListener('change', (e) => {
       autoScrollEnabled = e.target.checked;
@@ -2049,11 +3072,15 @@
         closeVideoModal();
         closeSimulationModal();
         closeTextModal();
+        closeAgentInspector();
       }
     });
 
     // Lifecycle Initialization & Background Pollers
     document.addEventListener('DOMContentLoaded', () => {
+      // Initialize Virtual Studio Simulation Engine (Mission N)
+      VirtualStudio.init();
+
       fetchSystemState();
       fetchLogs();
       refreshQueue();

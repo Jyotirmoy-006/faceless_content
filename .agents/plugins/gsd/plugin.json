@@ -1,0 +1,7 @@
+{
+  "name": "gsd",
+  "version": "2.0.0",
+  "description": "Get Stuff Done (GSD) Autonomous Roadmap, Phase Planning, and Execution Engine",
+  "skills": ["skills/gsd/SKILL.md"],
+  "rules": ["rules/gsd_rules.md"]
+}

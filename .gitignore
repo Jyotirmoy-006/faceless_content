@@ -28,6 +28,7 @@ pipeline/assets_cache/*
 
 # Python artifacts
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -44,6 +45,7 @@ parts/
 sdist/
 var/
 wheels/
+*.egg-info
 *.egg-info/
 .installed.cfg
 *.egg
@@ -74,3 +76,6 @@ ComfyUI_server/
 *.ckpt
 *.pt
 *.bin
+agent_images/
+node_modules/
+**/node_modules/

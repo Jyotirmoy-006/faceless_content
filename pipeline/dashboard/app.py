@@ -263,16 +263,17 @@ def queue_worker_step():
         mark_job_running(job_id, pid=proc.pid, stage=initial_stage)
         logger.info(f"[QUEUE_WORKER] Spawned PID {proc.pid} for job #{job_id}")
 
-        while True:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None:
-                break
-            if not line:
-                continue
+        is_pending_review = False
+        is_publish_failed = False
+        is_unverified_restricted = False
+        is_publish_deferred = False
+        publish_error_msg = None
 
-            # Write to log streams
-            log_fp_sub.write(line)
-            log_fp_sub.flush()
+        for line in proc.stdout:
+            # Mirror real-time process logs into job log file
+            if log_fp_sub:
+                log_fp_sub.write(line)
+                log_fp_sub.flush()
             if log_fp_root:
                 log_fp_root.write(line)
                 log_fp_root.flush()
@@ -293,6 +294,13 @@ def queue_worker_step():
             elif "[STAGE:PENDING_REVIEW]" in clean_line:
                 is_pending_review = True
                 update_job_stage(job_id, "PENDING_REVIEW")
+            elif "[STAGE:PUBLISH_FAILED]" in clean_line:
+                is_publish_failed = True
+                publish_error_msg = clean_line.split("[STAGE:PUBLISH_FAILED]", 1)[1].strip()
+                update_job_stage(job_id, "PUBLISH_FAILED")
+            elif "[STAGE:PUBLISH_DEFERRED]" in clean_line:
+                is_publish_deferred = True
+                update_job_stage(job_id, "QUOTA_DEFERRED")
 
             # Parse script JSON payload
             if "[SCRIPT_JSON]" in clean_line:
@@ -301,6 +309,10 @@ def queue_worker_step():
                     extracted_script_json = json_part
                 except Exception:
                     pass
+
+            # Parse unverified project restriction
+            if "[UNVERIFIED_PROJECT_RESTRICTION]" in clean_line:
+                is_unverified_restricted = True
 
             # Parse YouTube publish link
             if "[YOUTUBE_URL]" in clean_line:
@@ -332,6 +344,38 @@ def queue_worker_step():
         if exit_code == 10 or is_pending_review:
             logger.info(f"[QUEUE_WORKER] Job #{job_id} halted for human script review.")
             pause_job_for_review(job_id, script_json=extracted_script_json or "{}")
+        elif exit_code == 3 or is_publish_failed:
+            err_msg = publish_error_msg or f"Publishing failed (exit code {exit_code})"
+            logger.warning(f"[QUEUE_WORKER] Job #{job_id} FAILED publishing: {err_msg}")
+            mark_job_completed(
+                job_id,
+                status="FAILED_PUBLISH",
+                stage="PUBLISH_FAILED",
+                video_path=vid_str,
+                error_message=err_msg
+            )
+        elif is_unverified_restricted:
+            logger.info(f"[QUEUE_WORKER] Job #{job_id} COMPLETED but held for review due to unverified project restriction.")
+            verified_yt = normalize_youtube_url(extracted_youtube_url)
+            mark_job_completed(
+                job_id,
+                status="HELD_FOR_REVIEW",
+                stage="RESTRICTED_PRIVATE",
+                video_path=vid_str,
+                youtube_url=verified_yt,
+                error_message="[UNVERIFIED_PROJECT_RESTRICTION] Video is locked to private by Google OAuth policy."
+            )
+            update_video_gate_status(job_id, chief_critic_passed=True, compliance_passed=True)
+        elif is_publish_deferred:
+            logger.info(f"[QUEUE_WORKER] Job #{job_id} deferred due to YouTube quota budget.")
+            mark_job_completed(
+                job_id,
+                status="DEFERRED",
+                stage="QUOTA_DEFERRED",
+                video_path=vid_str,
+                error_message="YouTube quota budget exhausted for today; deferred."
+            )
+            update_video_gate_status(job_id, chief_critic_passed=True, compliance_passed=True)
         elif exit_code == 0:
             logger.info(f"[QUEUE_WORKER] Job #{job_id} COMPLETED successfully.")
             verified_yt = normalize_youtube_url(extracted_youtube_url)

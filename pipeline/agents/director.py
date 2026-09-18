@@ -175,20 +175,19 @@ def synthesize_chunk_edgetts(
 
 def synthesize_segment_narration(
     segment_text: str,
-    voice: str = "en-US-ChristopherNeural",
+    voice: str = "en-US-AndrewMultilingualNeural",
     output_path: Optional[Path] = None,
     temp_dir: Optional[Path] = None,
-    mock_edge_failure: bool = False
+    mock_edge_failure: bool = False,
+    is_hook: bool = False
 ) -> Tuple[Path, str, float, float]:
-    """Synthesizes an entire script segment's voiceover.
+    """Synthesizes an entire script segment's voiceover using VoiceActor agent (Rule 11).
 
-    Rule 11 Compliance (Mission F Pacing):
-    - Attempts synthesis of the FULL segment in a single edge-tts call first (natural prosody).
-    - Injects rate="+15%" (or Piper length_scale=0.85) for fast-paced short-form cadence.
-    - Two-pass EBU R128 loudness normalization to -16.0 LUFS / -1.5 dBTP.
-    - Aggressive internal silence eradication: crushes pauses > 150ms to <= 50ms.
-    - Zero-breath punctuation pauses (30ms clauses, 120ms sentences).
-    - Measures exact clean speech duration and punctuation-aware pause.
+    Applies:
+    - Expressive SSML wrappers with prosody and punctuation pauses (180ms/320ms).
+    - Default narrative-driven voice: en-US-AndrewMultilingualNeural.
+    - Two-pass EBU R128 loudness normalization to -14.0 LUFS / -1.5 dBTP.
+    - Fallback to local Piper TTS if Edge-TTS fails.
 
     Returns:
         Tuple[Path, str, float, float]:
@@ -199,86 +198,17 @@ def synthesize_segment_narration(
     out_wav = Path(output_path) if output_path else t_dir / "segment_processed.wav"
     out_wav.parent.mkdir(parents=True, exist_ok=True)
 
-    raw_edge_target = t_dir / f"seg_raw_{abs(hash(segment_text)) % 100000}_edge.mp3"
-    raw_piper_target = t_dir / f"seg_raw_{abs(hash(segment_text)) % 100000}_piper.wav"
-
-    source = "edge-tts"
-    raw_path = None
-
-    if not mock_edge_failure:
-        # 1. Attempt synthesis of the FULL narration in a single edge-tts call (+15% rate)
-        try:
-            synthesize_chunk_edgetts(
-                text=segment_text,
-                voice=voice,
-                output_path=raw_edge_target,
-                max_attempts=3,
-                base_backoff=2.0,
-                rate="+15%"
-            )
-            raw_path = raw_edge_target
-            source = "edge-tts"
-        except Exception as e:
-            logger.warning(f"Single-call edge-tts failed for segment: {e}. Trying adaptive sub-chunks...")
-            # Adaptive fallback: split into 2-3 sentence chunks
-            sub_chunks = chunk_text_by_sentence(segment_text, max_chars=400)
-            if len(sub_chunks) > 1:
-                try:
-                    sub_wavs = []
-                    for s_idx, sc in enumerate(sub_chunks):
-                        sc_path = t_dir / f"sub_{s_idx}_{abs(hash(sc)) % 10000}.mp3"
-                        synthesize_chunk_edgetts(sc, voice, sc_path, max_attempts=2, rate="+15%")
-                        sc_wav = convert_to_wav48k(sc_path, t_dir / f"sub_{s_idx}.wav")
-                        sub_wavs.append(sc_wav)
-                    # Merge sub-chunks
-                    sub_merged = t_dir / f"sub_merged_{abs(hash(segment_text)) % 10000}.wav"
-                    assemble_continuous_narration(sub_wavs, [30.0] * (len(sub_wavs) - 1), sub_merged)
-                    raw_path = sub_merged
-                    source = "edge-tts-adaptive"
-                except Exception as sub_err:
-                    logger.warning(f"Adaptive edge-tts failed: {sub_err}. Falling back to local Piper.")
-
-    # Fallback to local Piper if edge-tts failed or mocked
-    if raw_path is None:
-        logger.warning("[FALLBACK] Synthesizing segment locally using Piper TTS.")
-        synthesize_chunk_piper(segment_text, raw_piper_target, length_scale=0.85)
-        raw_path = raw_piper_target
-        source = "piper-fallback"
-
-    # 2. Standardize to 48kHz WAV
-    wav_48k = convert_to_wav48k(raw_path, t_dir / f"seg_48k_{abs(hash(segment_text)) % 100000}.wav")
-
-    # 3. Two-pass EBU R128 loudness normalization (-16.0 LUFS, -1.5 dBTP)
-    norm_wav, stats = normalize_loudness_ebu_r128(wav_48k, t_dir / f"seg_norm_{abs(hash(segment_text)) % 100000}.wav", target_lufs=-16.0, target_tp=-1.5)
-
-    # 4. Aggressive Internal Silence Eradication (Rule 11 - Mission F)
-    crushed_wav = t_dir / f"seg_crushed_{abs(hash(segment_text)) % 100000}.wav"
-    _, pre_dur, post_dur = eradicate_internal_silences(
-        input_wav=norm_wav,
-        output_wav=crushed_wav,
-        min_silence_len=150,
-        silence_thresh=-40.0,
-        keep_silence_ms=25,
-        crossfade_ms=10
+    from pipeline.agents.voice_actor import synthesize_segment as va_synthesize_segment
+    return va_synthesize_segment(
+        text=segment_text,
+        output_path=out_wav,
+        voice=voice,
+        is_hook=is_hook,
+        temp_dir=t_dir,
+        mock_edge_failure=mock_edge_failure,
+        target_lufs=-14.0,
+        target_tp=-1.5
     )
-
-    # 5. Silence trimming on remaining head/tail edges (down to 5ms pad)
-    trimmed_wav, stripped_s = strip_silence(crushed_wav, out_wav, threshold_db=-45.0, pad_ms=5.0)
-
-    # 6. Measure exact speech duration strictly on the compressed audio array
-    sr, samples = wavfile.read(str(trimmed_wav))
-    speech_duration = len(samples) / float(sr)
-
-    # 7. Compute zero-breath, punctuation-aware trailing pause length (25-75ms)
-    raw_pause_ms = get_punctuation_pause_ms(segment_text)
-    pause_ms = min(raw_pause_ms, 75.0)
-    pause_duration = pause_ms / 1000.0
-
-    logger.info(
-        f"Segment audio ready ({source}): speech={speech_duration:.2f}s (crushed from {pre_dur:.2f}s), "
-        f"pause={pause_ms:.0f}ms, LUFS={stats.get('input_i', -16.0):.1f} -> -16.0 (stripped {stripped_s:.2f}s dead-air)"
-    )
-    return trimmed_wav, source, speech_duration, pause_duration
 
 
 def synthesize_narration(
@@ -530,7 +460,7 @@ def run_gpu_worker(
 def orchestrate_video(
     script: Script,
     output_path: Path,
-    voice: str = "en-US-ChristopherNeural",
+    voice: str = "en-US-AndrewMultilingualNeural",
     verification_history: Optional[Dict[str, Any]] = None
 ) -> Path:
     """Coordinates full video assembly from Script through narration, assets, and render."""
@@ -560,7 +490,8 @@ def orchestrate_video(
                 segment_text=seg.narration,
                 voice=voice,
                 output_path=seg_audio_out,
-                temp_dir=staging_dir / "tts" / f"work_{i:02d}"
+                temp_dir=staging_dir / "tts" / f"work_{i:02d}",
+                is_hook=(i == 0)
             )
             if i == len(script.segments) - 1:
                 pause_dur = 0.0  # Zero trailing dead-air at the conclusion of the video
@@ -606,68 +537,40 @@ def orchestrate_video(
         ]
     )
 
-    # Step 3: Fetch visual assets for segments matching derived TTS durations
-    logger.info(f"Fetching assets for {len(script.segments)} script segments (matched to TTS durations)...")
-    segment_clips: List[Path] = []
-    for i, seg in enumerate(script.segments):
-        target_dur = seg_durations[i]
-        clip_path, was_cached = fetch_visual_asset(
-            visual_query=seg.visual_query,
-            duration=target_dur,
-            cache_dir=DEFAULT_ASSETS_CACHE / "pexels"
+    # Step 3: Fetch visual assets via ArtDirector (100% visual_shots unpacked, anti-drift gating)
+    from pipeline.agents.art_director import unpack_script_shots, source_shot_asset
+    from pipeline.agents.editor import calculate_beat_cuts, normalize_micro_cuts, assemble_master_visual
+
+    logger.info(f"[ART_DIRECTOR] Unpacking full visual_shots array for {len(script.segments)} script segments...")
+    total_audio_dur = sum(seg_durations)
+    shot_plans = unpack_script_shots(script, target_total_duration=total_audio_dur)
+    logger.info(f"[ART_DIRECTOR] Unpacked {len(shot_plans)} micro-cut shot plans across {len(script.segments)} segments.")
+
+    sourced_assets: List[Tuple[Path, str]] = []
+    for shot in shot_plans:
+        asset_path, src_type = source_shot_asset(
+            shot=shot,
+            cache_dir=staging_dir / "art_director",
+            allow_pexels_fallback=True
         )
-        segment_clips.append(clip_path)
+        sourced_assets.append((asset_path, shot.query))
+
+    # Calculate beat-synced micro-cuts (1.2s - 2.2s, max 2.5s)
+    micro_cuts, cut_timestamps = calculate_beat_cuts(
+        script=script,
+        segment_durations=seg_durations,
+        shot_assets=sourced_assets
+    )
 
     # -------------------------------------------------------------------------
-    # STAGE 3B: Art Director (Normalize & Compose Master Visual Track)
+    # STAGE 3B: Art Director (Normalize with Motion & Compose Master Visual Track)
     # -------------------------------------------------------------------------
-    from pipeline.workers.normalize_worker import normalize_clip
-    from moviepy import VideoFileClip, concatenate_videoclips
-
     def _execute_art_director(feedback: Optional[str] = None) -> Path:
         if feedback:
             logger.info(f"[ART_DIRECTOR_RETRY] Engaging corrective visual assembly: {feedback}")
-        normalized_clips: List[Path] = []
-        for i, raw_clip in enumerate(segment_clips):
-            target_dur = seg_durations[i]
-            norm_path = staging_dir / f"norm_seg_{i:02d}.mp4"
-            logger.info(f"  -> Normalizing clip {i+1}/{len(segment_clips)}: {raw_clip.name} (duration={target_dur:.2f}s)")
-            normalize_clip(
-                input_path=raw_clip,
-                output_path=norm_path,
-                target_w=1080,
-                target_h=1920,
-                fps=30,
-                duration=target_dur
-            )
-            normalized_clips.append(norm_path)
-
+        norm_clips = normalize_micro_cuts(micro_cuts, output_dir=staging_dir / "norm_cuts", fps=30)
         master_visual_path = staging_dir / "master_visual.mp4"
-        logger.info(f"Assembling {len(normalized_clips)} normalized visual clips with method='compose'...")
-        v_clips = [VideoFileClip(str(p)) for p in normalized_clips]
-        concatenated_visuals = concatenate_videoclips(v_clips, method="compose")
-        concatenated_visuals.write_videofile(
-            str(master_visual_path),
-            fps=30,
-            codec="libx264",
-            preset="ultrafast",
-            logger=None,
-            ffmpeg_params=[
-                "-g", "48",
-                "-keyint_min", "48",
-                "-sc_threshold", "0",
-                "-pix_fmt", "yuv420p",
-                "-color_range", "tv",
-                "-colorspace", "bt709",
-                "-color_primaries", "bt709",
-                "-color_trc", "bt709",
-                "-movflags", "+faststart"
-            ]
-        )
-        for vc in v_clips:
-            vc.close()
-        concatenated_visuals.close()
-        return master_visual_path
+        return assemble_master_visual(norm_clips, master_visual_path, fps=30)
 
     master_visual, art_history = run_stage_with_verification(
         stage_name="ART_DIRECTOR",
@@ -678,8 +581,20 @@ def orchestrate_video(
     if verification_history is not None:
         verification_history["art_director"] = [r.to_dict() for r in art_history]
 
+    # Assemble Multi-Layer Sound Design: Voiceover + Ducked BGM + Transition SFX
+    from pipeline.core.audio_processor import mix_voice_bgm_sfx
+    master_audio_path = staging_dir / "master_audio_mixed.wav"
+    logger.info(f"Mixing multi-layer audio with {len(cut_timestamps)} transition SFX cues and ducked BGM...")
+    mix_voice_bgm_sfx(
+        voice_path=audio_path,
+        output_path=master_audio_path,
+        sfx_timestamps=cut_timestamps,
+        sfx_type="whoosh",
+        bgm_volume_db=-22.0
+    )
+
     # -------------------------------------------------------------------------
-    # STAGE 3C: Editor (Final Master Render with Hard-Burned Subtitles)
+    # STAGE 3C: Editor (Final Master Render with Hard-Burned Subtitles & Multi-Layer Audio)
     # -------------------------------------------------------------------------
     def _execute_editor(feedback: Optional[str] = None) -> Path:
         if feedback:
@@ -689,12 +604,13 @@ def orchestrate_video(
             worker_name="render_worker.py",
             worker_args=[
                 "--video", str(master_visual),
-                "--audio", str(audio_path),
+                "--audio", str(master_audio_path),
                 "--output", str(output_path),
                 "--srt", str(srt_path)
             ]
         )
         return output_path
+
 
     final_rendered_path, editor_history = run_stage_with_verification(
         stage_name="EDITOR",
@@ -713,7 +629,7 @@ def main():
     parser = argparse.ArgumentParser(description="Director Agent CLI")
     parser.add_argument("--script", type=str, required=True, help="Path to input script JSON")
     parser.add_argument("--output", type=str, required=True, help="Path for rendered video output")
-    parser.add_argument("--voice", type=str, default="en-US-ChristopherNeural", help="TTS Voice")
+    parser.add_argument("--voice", type=str, default="en-US-AndrewMultilingualNeural", help="TTS Voice")
     args = parser.parse_args()
 
     with open(args.script, "r", encoding="utf-8") as f:

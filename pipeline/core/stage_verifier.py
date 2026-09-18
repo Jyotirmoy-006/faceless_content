@@ -191,6 +191,112 @@ def verify_copywriter_structural(script: Any) -> VerificationResult:
         )
 
 
+def verify_retention_pacing(
+    script: Any,
+    max_hook_words: int = 15,
+    max_avg_shot_dur: float = 3.2
+) -> VerificationResult:
+    """Tier 1: Evaluates viral short-form retention metrics on the script.
+
+    Checks:
+    - Hook conciseness: <= max_hook_words to stop the scroll in under 2.5s.
+    - Zero filler: Banned preamble phrases that cause immediate scroll away.
+    - Rapid visual pacing: Average shot length <= max_avg_shot_dur.
+    - Infinity loop integrity: No terminal goodbye phrases breaking rewatch loops.
+    """
+    t0 = time.time()
+    stage = "RETENTION_PACING"
+    try:
+        if isinstance(script, dict):
+            ps = ProductionScript.model_validate(script)
+        elif isinstance(script, ProductionScript):
+            ps = script
+        else:
+            raise ValueError(f"Expected ProductionScript or dict, received {type(script)}")
+
+        hook_clean = ps.hook.strip()
+        hook_words = hook_clean.split()
+        if len(hook_words) > max_hook_words:
+            raise ValueError(
+                f"Hook exceeds viral length threshold: {len(hook_words)} words (max allowed: {max_hook_words}). "
+                f"Hook must deliver scroll-stopping impact in under 2.5 seconds."
+            )
+
+        # Check for banned filler phrases
+        banned_openers = [
+            "imagine if", "in this video", "did you know that", "did you know",
+            "hey guys", "welcome back", "today we are going to", "have you ever wondered"
+        ]
+        lower_hook = hook_clean.lower()
+        for banned in banned_openers:
+            if lower_hook.startswith(banned):
+                raise ValueError(
+                    f"Hook contains banned low-retention filler phrase: '{banned}'. "
+                    f"Start immediately with high curiosity, contrast, or stakes."
+                )
+
+        # Shot pacing evaluation
+        total_duration = ps.total_estimated_duration()
+        total_shots = 0
+        for seg in ps.segments:
+            if getattr(seg, "visual_shots", None) and len(seg.visual_shots) > 0:
+                total_shots += len(seg.visual_shots)
+            else:
+                n_cuts = max(1, int(round(seg.duration_seconds / 2.2))) if seg.duration_seconds > 3.0 else 1
+                total_shots += n_cuts
+
+        avg_shot_dur = total_duration / max(1, total_shots)
+        if avg_shot_dur > max_avg_shot_dur:
+            raise ValueError(
+                f"Average shot duration {avg_shot_dur:.2f}s is too slow (target <= {max_avg_shot_dur:.2f}s). "
+                f"Provide more micro-shots to maintain visual momentum."
+            )
+
+        # Loop outro check
+        if getattr(ps, "loop_outro", None) and ps.loop_outro:
+            lower_outro = ps.loop_outro.strip().lower()
+            terminal_words = ["bye", "see you next time", "thanks for watching", "goodbye"]
+            for term in terminal_words:
+                if term in lower_outro:
+                    raise ValueError(
+                        f"Loop outro contains terminal closing phrase '{term}'. "
+                        f"Shorts must loop seamlessly into the opening hook without a goodbye."
+                    )
+
+        dt = time.time() - t0
+        details = {
+            "hook_words": len(hook_words),
+            "total_shots": total_shots,
+            "avg_shot_duration": round(avg_shot_dur, 2),
+            "has_loop_outro": bool(getattr(ps, "loop_outro", None))
+        }
+        logger.info(
+            f"[STAGE_GATE] [TIER 1] {stage} PASSED (hook_words={len(hook_words)}, "
+            f"shots={total_shots}, avg_shot={avg_shot_dur:.2f}s) [{dt:.3f}s]"
+        )
+        return VerificationResult(
+            passed=True,
+            stage=stage,
+            tier=1,
+            details=details,
+            latency_seconds=dt,
+            gemini_calls=0
+        )
+    except Exception as err:
+        dt = time.time() - t0
+        msg = str(err)
+        logger.warning(f"[STAGE_GATE] [TIER 1] {stage} FAILED: {msg}")
+        return VerificationResult(
+            passed=False,
+            stage=stage,
+            tier=1,
+            error_message=msg,
+            latency_seconds=dt,
+            gemini_calls=0
+        )
+
+
+
 def estimate_spoken_length(script: Script, target_wpm: float = 195.0) -> float:
     """Estimates spoken voiceover duration in seconds from script segment narration text.
     
@@ -690,7 +796,7 @@ def verify_copywriter(
     niche: Optional[str] = "tech",
     client = None
 ) -> VerificationResult:
-    """Combines Tier 1 (Structural) and Tier 2 (Semantic) verification for Copywriter.
+    """Combines Tier 1 (Structural + Retention) and Tier 2 (Semantic) verification for Copywriter.
     
     Tier 1 runs first (0 API cost). If Tier 1 fails, Tier 2 is skipped entirely.
     Tier 2 runs only if Tier 1 succeeds, evaluating narration coherence, repetition, and pacing fit.
@@ -698,6 +804,11 @@ def verify_copywriter(
     t1_res = verify_copywriter_structural(script)
     if not t1_res.passed:
         return t1_res
+
+    # Retention Pacing Gate (Tier 1, 0 API cost)
+    ret_res = verify_retention_pacing(script)
+    if not ret_res.passed:
+        return ret_res
 
     # Tier 2 runs only when Tier 1 passes
     t2_res = verify_copywriter_semantic(script, topic=topic, niche=niche, client=client)
@@ -708,11 +819,12 @@ def verify_copywriter(
         passed=True,
         stage="COPYWRITER",
         tier=2,
-        details={**t1_res.details, **t2_res.details},
+        details={**t1_res.details, **ret_res.details, **t2_res.details},
         critique=t2_res.critique,
-        latency_seconds=t1_res.latency_seconds + t2_res.latency_seconds,
+        latency_seconds=t1_res.latency_seconds + ret_res.latency_seconds + t2_res.latency_seconds,
         gemini_calls=t2_res.gemini_calls
     )
+
 
 
 # ==============================================================================

@@ -133,7 +133,8 @@ def call_comfyui_api(
     prompt_text: str,
     width: int = 512,
     height: int = 512,
-    timeout: float = 60.0
+    timeout: float = 60.0,
+    negative_prompt: str = "text, watermark, low quality, distorted, cartoon, blurry, flat"
 ) -> Optional[Image.Image]:
     """Sends a generation request to the ComfyUI API and retrieves the result."""
     prompt_endpoint = f"{server_url.rstrip('/')}/prompt"
@@ -196,7 +197,7 @@ def call_comfyui_api(
         },
         "7": {
             "inputs": {
-                "text": "ugly, blurry, low quality, distorted, watermark",
+                "text": negative_prompt,
                 "clip": ["4", 1]
             },
             "class_type": "CLIPTextEncode"
@@ -326,6 +327,7 @@ def main():
     parser.add_argument("--duration", type=float, default=4.0, help="Ken Burns clip duration in seconds")
     parser.add_argument("--fps", type=int, default=30, help="Video clip frame rate")
     parser.add_argument("--zoom-factor", type=float, default=1.15, help="Zoom scale factor (e.g. 1.15)")
+    parser.add_argument("--negative-prompt", type=str, default="text, watermark, low quality, distorted, cartoon, blurry, flat", help="Curated negative prompt")
     parser.add_argument("--min-free-vram", type=int, default=1024, help="Preflight free VRAM safety threshold in MB")
     parser.add_argument("--mock-on-error", action="store_true", default=False, help="Fallback to mock image if server offline (testing/dev only)")
     parser.add_argument("--disable-mock", action="store_true", default=False, help="Strict mode: fail immediately if ComfyUI generation fails")
@@ -347,6 +349,7 @@ def main():
         pil_image = call_comfyui_api(
             server_url=args.server,
             prompt_text=args.prompt,
+            negative_prompt=args.negative_prompt,
             width=args.width,
             height=args.height
         )

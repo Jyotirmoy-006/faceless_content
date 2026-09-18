@@ -50,6 +50,14 @@ class ScriptSegment(BaseModel):
         description="Search keywords for stock footage or prompt description for image generation (e.g. 'cinematic close up of futuristic robot')",
         min_length=3
     )
+    visual_shots: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of 2 to 3 rapid micro-shot visual queries (1.5s to 2.5s each) for fast-paced visual cuts"
+    )
+    beat: Optional[str] = Field(
+        default=None,
+        description="Narrative beat role (e.g. 'HOOK', 'TENSION', 'ESCALATION', 'REVELATION', 'LOOP')"
+    )
     duration_seconds: float = Field(
         ...,
         description="Estimated duration of this segment in seconds (typically 3 to 10 seconds)",
@@ -88,13 +96,19 @@ class Script(BaseModel):
         default=None,
         description="Optional closing call-to-action (e.g. 'Follow for daily tech insights')"
     )
+    loop_outro: Optional[str] = Field(
+        default=None,
+        description="Optional closing sentence designed to flow grammatically into the first word of the hook"
+    )
 
     def full_narration(self) -> str:
         """Returns the complete combined voiceover text."""
         parts = [self.hook]
         for seg in self.segments:
             parts.append(seg.narration)
-        if self.cta:
+        if self.loop_outro:
+            parts.append(self.loop_outro)
+        elif self.cta:
             parts.append(self.cta)
         return " ".join(p.strip() for p in parts if p.strip())
 

@@ -117,90 +117,23 @@ def generate_karaoke_ass(
     segments: List[dict],
     output_ass_path: Path,
     words_per_chunk: int = 3,
-    font_size: float = 62.0,
-    margin_v: int = 400,
-    highlight_bgr: str = "&H002BF7FF&"  # Vibrant Gold/Yellow in BGR format
+    font_size: float = 64.0,
+    margin_v: int = 520,
+    highlight_bgr: str = "&H0000FFFF&"  # Vivid Yellow (&H00BBGGRR&)
 ) -> Path:
-    """Builds a word-by-word karaoke-highlight caption track from Whisper segments.
+    """Builds an animated, high-contrast kinetic ASS caption track centered at Y ≈ 1400.
 
-    Each spoken word glows in highlight_bgr while other words in the active 2-4 word
-    chunk remain bold white with a thick black outline.
+    Delegates to pipeline.subtitles.generator.generate_kinetic_ass for kinetic word scaling
+    and positioning while preserving backwards compatibility.
     """
-    output_ass_path = Path(output_ass_path).resolve()
-    output_ass_path.parent.mkdir(parents=True, exist_ok=True)
-
-    subs = pysubs2.SSAFile()
-    subs.info["PlayResX"] = 1080
-    subs.info["PlayResY"] = 1920
-
-    style = create_shortform_style(font_size=font_size, margin_v=margin_v)
-    subs.styles["Default"] = style
-
-    highlight_tag = f"{{\\c{highlight_bgr}}}"
-    normal_tag = r"{\c&H00FFFFFF&}"
-
-    # Extract all words across all segments
-    all_words = []
-    for seg in segments:
-        seg_words = seg.get("words", [])
-        if seg_words:
-            for w in seg_words:
-                cleaned_word = w.get("word", "").strip().upper()
-                if cleaned_word:
-                    all_words.append({
-                        "word": cleaned_word,
-                        "start": float(w.get("start", 0.0)),
-                        "end": float(w.get("end", 0.0))
-                    })
-        else:
-            # Fallback if words not present in segment: split segment text
-            text = seg.get("text", "").strip()
-            if text:
-                seg_start = float(seg.get("start", 0.0))
-                seg_end = float(seg.get("end", 0.0))
-                words_in_text = text.split()
-                dur_per_word = (seg_end - seg_start) / max(1, len(words_in_text))
-                for idx, w in enumerate(words_in_text):
-                    all_words.append({
-                        "word": w.strip().upper(),
-                        "start": seg_start + idx * dur_per_word,
-                        "end": seg_start + (idx + 1) * dur_per_word
-                    })
-
-    if not all_words:
-        # Write empty valid ASS file
-        subs.save(str(output_ass_path))
-        return output_ass_path
-
-    # Chunk words into groups of `words_per_chunk`
-    i = 0
-    while i < len(all_words):
-        chunk = all_words[i:i + words_per_chunk]
-        i += words_per_chunk
-
-        # For each word in this chunk, create an event where that word is highlighted
-        for active_idx, active_word in enumerate(chunk):
-            w_start_ms = int(active_word["start"] * 1000)
-            w_end_ms = int(active_word["end"] * 1000)
-
-            if w_end_ms <= w_start_ms:
-                w_end_ms = w_start_ms + 250
-
-            # Construct formatted line
-            line_parts = []
-            for j, w in enumerate(chunk):
-                if j == active_idx:
-                    line_parts.append(f"{highlight_tag}{w['word']}{normal_tag}")
-                else:
-                    line_parts.append(f"{normal_tag}{w['word']}")
-
-            event_text = " ".join(line_parts)
-            subs.events.append(pysubs2.SSAEvent(
-                start=w_start_ms,
-                end=w_end_ms,
-                text=event_text,
-                style="Default"
-            ))
-
-    subs.save(str(output_ass_path))
-    return output_ass_path
+    from pipeline.subtitles.generator import generate_kinetic_ass, VIVID_YELLOW_BGR, TARGET_Y
+    color = highlight_bgr if highlight_bgr != "&H002BF7FF&" else VIVID_YELLOW_BGR
+    return generate_kinetic_ass(
+        segments=segments,
+        output_ass_path=output_ass_path,
+        words_per_chunk=words_per_chunk,
+        font_name="Montserrat Black",
+        font_size=font_size,
+        highlight_color_bgr=color,
+        center_y=TARGET_Y
+    )

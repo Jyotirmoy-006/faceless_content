@@ -40,6 +40,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from pipeline.core.logger import get_logger
 from pipeline.core.notifier import notifier
+from pipeline.core.rate_limiter import global_rate_limiter
 
 logger = get_logger("llm_manager")
 
@@ -62,6 +63,12 @@ class AgentRole(str, Enum):
     # Pipeline aliases
     SCRIPTWRITER = "scriptwriter"
     IDEATOR = "ideator"
+    # Autonomous Department Head Gatekeepers
+    HEAD_OF_STORY = "head_of_story"
+    HEAD_OF_AUDIO = "head_of_audio"
+    HEAD_OF_ART = "head_of_art"
+    HEAD_OF_POST = "head_of_post"
+    HEAD_OF_COMPLIANCE = "head_of_compliance"
 
 
 # Strict Rule 14 Model Routing Mapping
@@ -75,6 +82,11 @@ ROLE_MODEL_MAPPING: dict[AgentRole, str] = {
     AgentRole.SAFETY_OFFICER: "gemini-3.6-flash",
     AgentRole.SCRIPTWRITER: "gemini-3.6-flash",
     AgentRole.IDEATOR: "gemini-3.6-flash",
+    AgentRole.HEAD_OF_STORY: "gemini-3.6-flash",
+    AgentRole.HEAD_OF_AUDIO: "gemini-3.6-flash",
+    AgentRole.HEAD_OF_ART: "gemini-3.6-flash",
+    AgentRole.HEAD_OF_POST: "gemini-3.6-flash",
+    AgentRole.HEAD_OF_COMPLIANCE: "gemini-3.6-flash",
 }
 
 # Canonical ordered list for static round-robin role assignment
@@ -276,7 +288,15 @@ class LLMManager:
         canonical_role = role
         if role in (AgentRole.SCRIPTWRITER, AgentRole.IDEATOR):
             canonical_role = AgentRole.COPYWRITER
-        elif role in (AgentRole.COMPLIANCE_OFFICER, AgentRole.SAFETY_OFFICER):
+        elif role in (
+            AgentRole.COMPLIANCE_OFFICER,
+            AgentRole.SAFETY_OFFICER,
+            AgentRole.HEAD_OF_STORY,
+            AgentRole.HEAD_OF_AUDIO,
+            AgentRole.HEAD_OF_ART,
+            AgentRole.HEAD_OF_POST,
+            AgentRole.HEAD_OF_COMPLIANCE,
+        ):
             canonical_role = AgentRole.CHIEF_CRITIC
 
         try:
@@ -421,6 +441,9 @@ class LLMManager:
             success = False
             for attempt in range(max_retries + 1):
                 try:
+                    # Single-Account Rate Limiter: strictly throttle calls to prevent 429 errors
+                    global_rate_limiter.acquire()
+
                     logger.debug(
                         f"[LLM_CALL] Role: '{getattr(role, 'value', role)}' | "
                         f"Model: '{model_name}' | Account: {account.account_id} | Attempt {attempt + 1}"

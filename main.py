@@ -55,6 +55,15 @@ from pipeline.agents.compliance_officer import (
     Recommendation,
 )
 
+from pipeline.agents.department_heads import (
+    head_of_story,
+    head_of_audio,
+    head_of_art,
+    head_of_post,
+    head_of_compliance,
+    DepartmentGateRejectionError,
+)
+
 from pipeline.core.logger import get_logger
 from pipeline.dashboard.database import record_run_telemetry, update_video_gate_status
 from pipeline.agents.strategist import strategist
@@ -213,6 +222,7 @@ def run_pipeline(
         "quota_spent": 0,
         "results": {},
         "verification": {},
+        "department_heads": {},
         "simulation_trace": [],
         "raw_materials": [],
         "final_artifacts": []
@@ -304,6 +314,18 @@ def run_pipeline(
             })
             logger.info(f"Concept approved: '{concept.topic}' ({concept.angle}) [{telemetry['stages']['ideation']:.2f}s]")
 
+            # Department Head Inspection: Head of Story (Concept Gate)
+            story_concept_gate = head_of_story.inspect(concept)
+            telemetry["department_heads"]["story_concept"] = story_concept_gate.to_dict()
+            if not story_concept_gate.passed:
+                raise DepartmentGateRejectionError(
+                    department="story",
+                    head_title="Head of Story",
+                    tier=story_concept_gate.tier,
+                    feedback=story_concept_gate.feedback or "Concept rejected by Head of Story.",
+                    details=story_concept_gate.details
+                )
+
             # STAGE 2: Scriptwriting (Copywriter / Scriptwriter Agent)
             print("[STAGE:SCRIPTWRITING]", flush=True)
             t0 = time.time()
@@ -352,6 +374,21 @@ def run_pipeline(
                 f"~{script.total_estimated_duration():.1f}s total duration [{telemetry['stages']['scriptwriting']:.2f}s]"
             )
 
+            # Department Head Inspection: Head of Story (Script Gate)
+            story_script_gate = head_of_story.inspect(
+                script,
+                context={"topic": concept.topic, "niche": concept.niche}
+            )
+            telemetry["department_heads"]["story_script"] = story_script_gate.to_dict()
+            if not story_script_gate.passed:
+                raise DepartmentGateRejectionError(
+                    department="story",
+                    head_title="Head of Story",
+                    tier=story_script_gate.tier,
+                    feedback=story_script_gate.feedback or "Script rejected by Head of Story.",
+                    details=story_script_gate.details
+                )
+
             # Human-in-the-loop review check
             if require_approval:
                 script_payload = script.model_dump()
@@ -386,7 +423,7 @@ def run_pipeline(
         video_path = orchestrate_video(
             script=script,
             output_path=rendered_output_path,
-            voice="en-US-ChristopherNeural",
+            voice="en-US-AndrewMultilingualNeural",
             verification_history=telemetry["verification"]
         )
         if not video_path.exists() or video_path.stat().st_size == 0:
@@ -405,10 +442,10 @@ def run_pipeline(
             "stage": "AUDIO_TTS",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": round(prod_time * 0.35, 2),
-            "input_payload": {"voice": "en-US-ChristopherNeural", "segments": len(script.segments)},
+            "input_payload": {"voice": "en-US-AndrewMultilingualNeural", "segments": len(script.segments)},
             "reasoning_trace": "Synthesized chunked TTS narration with natural punctuation pauses. Loudness normalized to EBU R128 (-14.0 LUFS).",
             "prompt_template": "Sentence-chunked TTS synthesis with local Piper fallback.",
-            "structured_output": {"status": "PASSED", "voice": "en-US-ChristopherNeural", "target_lufs": -14.0},
+            "structured_output": {"status": "PASSED", "voice": "en-US-AndrewMultilingualNeural", "target_lufs": -14.0},
             "status": "PASSED"
         })
         telemetry["simulation_trace"].append({
@@ -454,6 +491,30 @@ def run_pipeline(
             f"Video rendered successfully: {video_path.name} "
             f"({telemetry['video_size_mb']} MB) [{telemetry['stages']['production']:.2f}s]"
         )
+
+        # Department Head Inspection: Head of Art (Visual Gate)
+        art_gate = head_of_art.inspect(video_path)
+        telemetry["department_heads"]["art"] = art_gate.to_dict()
+        if not art_gate.passed:
+            raise DepartmentGateRejectionError(
+                department="art",
+                head_title="Head of Art",
+                tier=art_gate.tier,
+                feedback=art_gate.feedback or "Video rejected by Head of Art.",
+                details=art_gate.details
+            )
+
+        # Department Head Inspection: Head of Post (Assembly & Subtitle Gate)
+        post_gate = head_of_post.inspect(video_path)
+        telemetry["department_heads"]["post"] = post_gate.to_dict()
+        if not post_gate.passed:
+            raise DepartmentGateRejectionError(
+                department="post",
+                head_title="Head of Post",
+                tier=post_gate.tier,
+                feedback=post_gate.feedback or "Master rejected by Head of Post.",
+                details=post_gate.details
+            )
 
         # ---------------------------------------------------------------------
         # STAGE 3.5: Risk & Safety Compliance Gate (Compliance Officer - Rule 13)
@@ -511,6 +572,31 @@ def run_pipeline(
         # ---------------------------------------------------------------------
         print("[STAGE:PUBLISH]", flush=True)
         effective_skip_publish = skip_publish or (publish_target == "disk_only")
+
+        # Department Head Inspection: Head of Compliance (Pre-Publishing Gate)
+        compliance_head_gate = head_of_compliance.inspect(
+            video_path,
+            context={
+                "title": concept.topic,
+                "description": script.full_narration(),
+                "skip_publish": effective_skip_publish,
+                "video_path": video_path,
+                "topic": concept.topic,
+                "niche": concept.niche,
+                "narration": script.full_narration(),
+                "dry_run": dry_run,
+            }
+        )
+        telemetry["department_heads"]["compliance"] = compliance_head_gate.to_dict()
+        if not compliance_head_gate.passed:
+            raise DepartmentGateRejectionError(
+                department="compliance",
+                head_title="Head of Compliance",
+                tier=compliance_head_gate.tier,
+                feedback=compliance_head_gate.feedback or "Publishing rejected by Head of Compliance.",
+                details=compliance_head_gate.details
+            )
+
         if not effective_skip_publish:
             logger.info("\n>>> [STAGE 4] Multi-Platform Publishing (Publisher Agent)...")
             
@@ -527,6 +613,37 @@ def run_pipeline(
             telemetry["stages"]["youtube_publish"] = time.time() - t0
             telemetry["results"]["youtube"] = yt_res.model_dump()
             telemetry["quota_spent"] += yt_res.units_spent
+
+            if yt_res.status == PublishStatus.PUBLISHED:
+                if yt_res.url:
+                    print(f"[YOUTUBE_URL] {yt_res.url}", flush=True)
+                print(f"[YOUTUBE_STATUS] {yt_res.status}", flush=True)
+                if yt_res.is_restricted:
+                    print(f"[UNVERIFIED_PROJECT_RESTRICTION] Video '{yt_res.post_id}' was forced to private by Google's unverified OAuth project policy: {yt_res.url}", flush=True)
+                    telemetry["youtube_restricted"] = True
+            elif yt_res.status == PublishStatus.DEFERRED:
+                print(f"[STAGE:PUBLISH_DEFERRED] {yt_res.message}", flush=True)
+                telemetry["youtube_deferred"] = True
+                if job_id:
+                    try:
+                        sch = strategist.schedule_video(job_id, topic=concept.topic, niche=concept.niche)
+                        logger.info(f"[SCHEDULED_FOR_PUBLISH] Quota exhausted: Job {job_id} scheduled for {sch.target_publish_datetime}")
+                    except Exception as sch_err:
+                        logger.warning(f"Could not schedule video in DB for job {job_id}: {sch_err}")
+            elif yt_res.status == PublishStatus.FAILED:
+                err_code = yt_res.error_code or "UNKNOWN"
+                print(f"[STAGE:PUBLISH_FAILED] [{err_code}] {yt_res.message}", flush=True)
+                telemetry["youtube_failed"] = True
+                telemetry["error_message"] = f"[{err_code}] {yt_res.message}"
+                try:
+                    from pipeline.core.notifier import notifier
+                    notifier.alert(
+                        f"[PUBLISH_FAILURE] YouTube upload failed: [{err_code}] {yt_res.message}",
+                        level="ERROR",
+                        extra={"error_code": err_code, "details": yt_res.message}
+                    )
+                except Exception:
+                    pass
 
             # Instagram Reels (Ephemeral Hosting)
             t0 = time.time()
@@ -552,16 +669,34 @@ def run_pipeline(
         telemetry["total_wall_clock_time"] = time.time() - telemetry["start_time"]
 
         # ---------------------------------------------------------------------
-        # SUCCESS: Reset Circuit Breaker (Rule 8) & Record Telemetry
+        # Final Status & Circuit Breaker Handling
         # ---------------------------------------------------------------------
-        circuit_breaker.record_success()
+        final_status = "SUCCESS"
+        if telemetry.get("youtube_failed"):
+            final_status = "FAILED_PUBLISH"
+        elif telemetry.get("youtube_restricted"):
+            final_status = "HELD_FOR_REVIEW"
+        elif telemetry.get("youtube_deferred"):
+            final_status = "DEFERRED_QUOTA"
+
+        if final_status == "SUCCESS":
+            circuit_breaker.record_success()
+        elif final_status in ("HELD_FOR_REVIEW", "DEFERRED_QUOTA"):
+            circuit_breaker.record_success()  # Video produced successfully; downstream release pending
+        else:
+            circuit_breaker.record_failure(f"Publishing failed: {telemetry.get('error_message')}")
+
         try:
-            record_run_telemetry(telemetry, status="SUCCESS")
+            record_run_telemetry(telemetry, status=final_status, error_message=telemetry.get("error_message"))
         except Exception as db_err:
             logger.warning(f"Could not persist run telemetry to SQLite: {db_err}")
 
         # Print Final Telemetry Summary
         _print_run_summary(telemetry)
+
+        if final_status == "FAILED_PUBLISH":
+            sys.exit(3)
+
         return telemetry
 
     except ComplianceBlockError as block_err:
@@ -659,6 +794,19 @@ def _print_run_summary(telemetry: dict) -> None:
         print(f"  Gemini File API Reused:      {comp_tel.get('was_upload_reused', False)} (Upload Latency: {comp_tel.get('upload_latency_s', 0):.2f}s)")
         print(f"  Added Inference Latency:     {comp_tel.get('evaluation_latency_s', 0):.2f}s | Estimated Cost: ${comp_tel.get('estimated_cost_usd', 0):.6f}")
         print(f"  Summary:                     {comp.get('summary', '')}")
+
+    if "department_heads" in telemetry and telemetry["department_heads"]:
+        print("-" * 80)
+        print("DEPARTMENT HEAD AUDIT GATES (QUALITY SIGN-OFF):")
+        for dept_key, gate_data in telemetry["department_heads"].items():
+            status_str = "APPROVED" if gate_data.get("passed") else "REJECTED"
+            head_title = gate_data.get("head_title", dept_key.upper())
+            tier = gate_data.get("tier", 1)
+            score_val = gate_data.get("score")
+            score_str = f"{score_val:.1f}/10" if score_val is not None else "VERIFIED"
+            lat = gate_data.get("latency_seconds", 0.0)
+            fb = f" - Critique: {gate_data['feedback']}" if gate_data.get("feedback") else ""
+            print(f"  [{status_str}] {head_title:<22} (Tier {tier}: {score_str}) [{lat:.3f}s]{fb}")
     print("=" * 80 + "\n")
 
 

@@ -155,19 +155,30 @@ def get_valid_script(
             return load_fallback_template(topic, niche)
 
     system_prompt = (
-        "You are an elite short-form viral video scriptwriter (YouTube Shorts, Instagram Reels). "
-        "Create punchy, high-retention video scripts that strictly adhere to the provided JSON schema. "
-        "The hook MUST be delivered in the first 3 seconds to immediately stop the scroll. "
-        "Each segment must contain spoken voiceover text and a detailed visual_query specifying "
-        "the exact stock footage or generative image prompt needed to illustrate that scene."
+        "You are an elite short-form viral retention engineer and scriptwriter (YouTube Shorts, Instagram Reels, TikTok). "
+        "Create punchy, high-retention video scripts that strictly adhere to the provided JSON schema.\n"
+        "CORE RETENTION CONSTRAINTS:\n"
+        "1. HOOK (0.0s - 3.0s): Must stop the scroll in under 12 spoken words. Deliver immediate curiosity, contradiction, "
+        "or high stakes. NEVER start with 'Imagine', 'In this video', 'Did you know', 'Hey guys', 'Welcome back', or rhetorical questions.\n"
+        "2. 5 NARRATIVE BEATS: Structure across segments using beats: 'HOOK', 'TENSION', 'ESCALATION', 'REVELATION', and 'LOOP'.\n"
+        "3. RAPID VISUAL SHOTS: For each segment, provide 'visual_shots' containing 2 to 3 distinct micro-shot queries "
+        "(1.5s to 2.5s each) specifying varied camera angles, lighting, and action to prevent visual fatigue.\n"
+        "4. INFINITY LOOP OUTRO: Provide 'loop_outro' as a concluding clause that connects grammatically and seamlessly into the opening word of the hook for endless rewatch loops.\n"
+        "5. ZERO FLUFF: Edit tight. High information density. Use concrete, vivid verbs."
     )
 
     prompt = (
-        f"Write a high-retention short-form video script on the topic: '{topic}'.\n"
+        f"Write an ultra-high-retention viral short-form video script on the topic: '{topic}'.\n"
         f"Category/Niche: {niche or 'general'}.\n"
-        f"Target duration: 30 to 45 seconds total across 3 to 5 narrative segments.\n"
-        "Ensure all schema fields (hook, segments with segment_index, narration, visual_query, duration_seconds) are fully provided."
+        f"Target duration: 30 to 45 seconds total across 4 to 5 narrative segments.\n"
+        "Requirements:\n"
+        "- The 'hook' must be bold, intense, and under 12 words.\n"
+        "- Assign each segment a 'beat' ('HOOK', 'TENSION', 'ESCALATION', 'REVELATION', 'LOOP').\n"
+        "- In each segment, provide 'visual_shots' with 2 to 3 micro-shot visual queries (e.g. ['macro lens glowing circuit close up', 'drone aerial futuristic laboratory neon', 'rapid zoom server rack blinking blue']).\n"
+        "- Craft 'loop_outro' so the video loops seamlessly back into the hook.\n"
+        "Ensure all schema fields are strictly provided and valid."
     )
+
     if feedback:
         prompt += (
             f"\n\nIMPORTANT REVISION FEEDBACK: Your previous draft failed verification:\n"

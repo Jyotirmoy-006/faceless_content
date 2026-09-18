@@ -40,7 +40,9 @@ class TestDashboardQueue(unittest.TestCase):
     def setUpClass(cls):
         app.config["TESTING"] = True
         cls.client = app.test_client()
+        cls._orig_jobs_db_path = os.environ.get("JOBS_DB_PATH")
         cls.test_db = ROOT_DIR / "pipeline" / "dashboard" / "test_queue.db"
+        os.environ["JOBS_DB_PATH"] = str(cls.test_db)
         init_db(cls.test_db)
         os.environ["MAIN_SCRIPT"] = "mock_main.py"
         os.environ["MOCK_STEP_SLEEP"] = "0.2"
@@ -49,6 +51,10 @@ class TestDashboardQueue(unittest.TestCase):
     def tearDownClass(cls):
         os.environ.pop("MAIN_SCRIPT", None)
         os.environ.pop("MOCK_STEP_SLEEP", None)
+        if cls._orig_jobs_db_path is not None:
+            os.environ["JOBS_DB_PATH"] = cls._orig_jobs_db_path
+        else:
+            os.environ.pop("JOBS_DB_PATH", None)
         try:
             if cls.test_db.exists():
                 cls.test_db.unlink(missing_ok=True)

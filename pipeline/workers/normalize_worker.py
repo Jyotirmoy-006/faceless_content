@@ -23,7 +23,8 @@ def normalize_clip(
     fps: int = 30,
     duration: Optional[float] = None,
     crf: int = 18,
-    preset: str = "veryfast"
+    preset: str = "veryfast",
+    motion: str = "none"
 ) -> Path:
     """Normalizes an individual video clip to canonical specs using FFmpeg.
 
@@ -36,6 +37,7 @@ def normalize_clip(
         duration: Optional exact segment duration to trim/loop to.
         crf: Quality level (default 18 for visually lossless).
         preset: x264 speed preset.
+        motion: Camera motion type ('none', 'zoom_in', 'zoom_out').
 
     Returns:
         Path to the normalized video file.
@@ -48,12 +50,29 @@ def normalize_clip(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Scale to cover target box while preserving aspect ratio, center-crop excess, set SAR=1
-    vf_filter = (
+    # Base scaling & cropping
+    base_filter = (
         f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop={target_w}:{target_h}:(iw-{target_w})/2:(ih-{target_h})/2,"
         f"setsar=1"
     )
+
+    if motion in ("zoom_in", "zoom_out") and duration and duration > 0:
+        total_frames = max(1, int(fps * duration))
+        step = 0.12 / total_frames
+        if motion == "zoom_in":
+            vf_filter = (
+                f"{base_filter},"
+                f"zoompan=z='min(zoom+{step:.6f},1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={target_w}x{target_h}:fps={fps}"
+            )
+        else:
+            vf_filter = (
+                f"{base_filter},"
+                f"zoompan=z='max(1.15-{step:.6f}*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={target_w}x{target_h}:fps={fps}"
+            )
+    else:
+        vf_filter = base_filter
+
 
     # Detect if input has an audio stream
     probe_cmd = [
@@ -127,6 +146,12 @@ def main():
     parser.add_argument("--height", type=int, default=1920, help="Target height (default: 1920)")
     parser.add_argument("--fps", type=int, default=30, help="Target constant frame rate (default: 30)")
     parser.add_argument("--duration", type=float, default=None, help="Target duration in seconds to trim/loop")
+    parser.add_argument(
+        "--motion",
+        choices=["none", "zoom_in", "zoom_out"],
+        default="none",
+        help="Camera motion effect (default: none)"
+    )
     args = parser.parse_args()
 
     out = normalize_clip(
@@ -135,7 +160,8 @@ def main():
         target_w=args.width,
         target_h=args.height,
         fps=args.fps,
-        duration=args.duration
+        duration=args.duration,
+        motion=args.motion
     )
     print(f"[NORMALIZE_WORKER] Successfully normalized {args.input} -> {out}")
 

@@ -1,0 +1,7 @@
+{
+  "workflow": "gsd-sdd",
+  "version": "2.0.0",
+  "autonomous": false,
+  "commit_per_plan": true,
+  "verification_required": true
+}
