@@ -578,7 +578,7 @@ def run_pipeline(
             video_path,
             context={
                 "title": concept.topic,
-                "description": script.full_narration(),
+                "description": f"{script.full_narration()}\n\n#shorts #{concept.niche} #facts",
                 "skip_publish": effective_skip_publish,
                 "video_path": video_path,
                 "topic": concept.topic,

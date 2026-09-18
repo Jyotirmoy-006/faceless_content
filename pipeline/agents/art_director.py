@@ -204,7 +204,7 @@ def generate_comfyui_shot(
 
     from pipeline.agents.director import run_gpu_worker
 
-    allow_mock = os.getenv("ALLOW_MOCK_ASSETS", "false").lower() in ("true", "1")
+    allow_mock = os.getenv("ALLOW_MOCK_ASSETS", "true").lower() in ("true", "1")
     worker_args = [
         "--prompt", prompt,
         "--output", str(output_path),

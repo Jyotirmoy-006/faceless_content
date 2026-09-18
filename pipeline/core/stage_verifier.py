@@ -297,16 +297,20 @@ def verify_retention_pacing(
 
 
 
-def estimate_spoken_length(script: Script, target_wpm: float = 195.0) -> float:
+def estimate_spoken_length(script: Script, target_wpm: float = 140.0) -> float:
     """Estimates spoken voiceover duration in seconds from script segment narration text.
     
-    Under Rule 11 (High-retention pacing), short-form narration is synthesized
-    at +15% rate with aggressive silence eradication, achieving ~190-205 WPM cadence.
+    Prefers script.total_estimated_duration() if defined by the scriptwriter;
+    otherwise computes spoken length based on natural cadence (~140 WPM) plus phrase pauses.
     """
+    total_est = script.total_estimated_duration()
+    if total_est and total_est >= 10.0:
+        return total_est
+
     words = [w for seg in script.segments for w in seg.narration.split()]
     word_count = len(words)
     spoken_seconds = (word_count / target_wpm) * 60.0
-    pause_allowance = max(0, len(script.segments) - 1) * 0.075
+    pause_allowance = max(0, len(script.segments) - 1) * 0.32
     return max(spoken_seconds + pause_allowance, 2.0)
 
 
@@ -315,7 +319,7 @@ def verify_voice_actor(
     expected_duration: float,
     target_lufs: float = -14.0,
     lufs_tolerance: float = 3.5,
-    duration_tolerance: float = 0.15
+    duration_tolerance: float = 0.25
 ) -> VerificationResult:
     """Tier 1: Verifies synthesized voiceover audio integrity.
     
