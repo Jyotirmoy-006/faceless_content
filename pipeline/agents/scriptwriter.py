@@ -58,30 +58,56 @@ def load_fallback_template(topic: str, niche: Optional[str] = None) -> Script:
         return Script.model_validate(data)
     except Exception as e:
         logger.error(f"Failed to load fallback template from {selected_template}: {e}. Generating in-memory safety script.")
-        # Ultimate fail-safe: guaranteed valid Script
+        # Ultimate fail-safe: guaranteed valid Script with visual_shots satisfying Head of Story
         return Script(
             topic=topic or "Curiosities of the World",
             niche=niche or "general",
             target_duration=30,
-            hook="Here is something fascinating you probably didn't know until now.",
+            hook="Here is a wild truth that nobody was ready for until right now.",
             segments=[
                 ScriptSegment(
                     segment_index=1,
-                    narration="Throughout history, extraordinary discoveries have completely altered human understanding.",
+                    narration="Throughout history, extraordinary hidden discoveries have completely altered human reality.",
                     visual_query="mysterious glowing astronomical phenomena high detail cinematic",
-                    duration_seconds=10.0
+                    visual_shots=[
+                        "mysterious glowing astronomical galaxy cinematic",
+                        "macro glowing physics particle stream",
+                        "dramatic zoom into deep space cosmic void"
+                    ],
+                    duration_seconds=6.0
                 ),
                 ScriptSegment(
                     segment_index=2,
-                    narration="Modern science continues to uncover new layers to the world around us.",
+                    narration="Wait, modern researchers looked closer and uncovered secrets hidden in plain sight.",
                     visual_query="advanced laboratory microscopic visualization glowing particles 4k",
-                    duration_seconds=10.0
+                    visual_shots=[
+                        "advanced laboratory microscopic visualization",
+                        "close up scientist shocked looking into holographic monitor",
+                        "rapid data visualization scrolling glowing code"
+                    ],
+                    duration_seconds=6.0
                 ),
                 ScriptSegment(
                     segment_index=3,
-                    narration="Stay curious, because every breakthrough begins with a single question.",
+                    narration="Actually, the real lore goes deeper than anyone ever predicted.",
+                    visual_query="holographic futuristic blueprint glowing neon light",
+                    visual_shots=[
+                        "holographic futuristic blueprint glowing",
+                        "over the shoulder view deciphering ancient code",
+                        "extreme macro laser pulse illuminating artifact"
+                    ],
+                    duration_seconds=6.0
+                ),
+                ScriptSegment(
+                    segment_index=4,
+                    narration="Lock in, because understanding this shifts how you perceive everything around you.",
                     visual_query="person watching futuristic city sunrise contemplation",
-                    duration_seconds=10.0
+                    visual_shots=[
+                        "silhouette person watching futuristic city sunrise",
+                        "dramatic sunset golden hour horizon reflection",
+                        "rapid zoom out high tech metropolis"
+                    ],
+                    duration_seconds=6.0
                 )
             ],
             cta="Follow for more daily discoveries."
@@ -155,27 +181,44 @@ def get_valid_script(
             return load_fallback_template(topic, niche)
 
     system_prompt = (
-        "You are an elite short-form viral retention engineer and scriptwriter (YouTube Shorts, Instagram Reels, TikTok). "
+        "You are an elite short-form viral retention engineer and scriptwriter (YouTube Shorts, TikTok). "
         "Create punchy, high-retention video scripts that strictly adhere to the provided JSON schema.\n"
+        "TONE & NARRATOR PERSONA (ENERGETIC TONE LOCK):\n"
+        "- High-Energy & Upbeat: Speak with intense curiosity, vivid momentum, and confident urgency. "
+        "Never sound like a dull academic lecture or monotone documentary narrator.\n"
+        "- Contemporary & Rhythmic: Use punchy, snappy, conversational phrasing with strong cadence and rhythmic drive. "
+        "Avoid archaic transitions ('furthermore', 'in addition', 'moreover', 'as we can see').\n"
         "CORE RETENTION CONSTRAINTS:\n"
-        "1. HOOK (0.0s - 3.0s): Must stop the scroll in under 12 spoken words. Deliver immediate curiosity, contradiction, "
-        "or high stakes. NEVER start with 'Imagine', 'In this video', 'Did you know', 'Hey guys', 'Welcome back', or rhetorical questions.\n"
-        "2. 5 NARRATIVE BEATS: Structure across segments using beats: 'HOOK', 'TENSION', 'ESCALATION', 'REVELATION', and 'LOOP'.\n"
-        "3. RAPID VISUAL SHOTS: For each segment, provide 'visual_shots' containing 2 to 3 distinct micro-shot queries "
-        "(1.5s to 2.5s each) specifying varied camera angles, lighting, and action to prevent visual fatigue.\n"
-        "4. INFINITY LOOP OUTRO: Provide 'loop_outro' as a concluding clause that connects grammatically and seamlessly into the opening word of the hook for endless rewatch loops.\n"
-        "5. ZERO FLUFF: Edit tight. High information density. Use concrete, vivid verbs."
+        "1. HOOK (0.0s - 3.0s): Must stop the scroll in under 12 spoken words. Deliver immediate personal stakes "
+        "('Your passwords', 'Your bank account') or high-stakes visceral threats. NEVER start with 'Imagine', 'In this video', 'Did you know', or rhetorical questions.\n"
+        "2. NO REPETITION IN SEGMENT 1: Segment 1 is the 'HOOK' beat, but its narration MUST NOT repeat the hook sentence! "
+        "Segment 1 narration must immediately dive into the context, mechanism, or proof.\n"
+        "3. 5 NARRATIVE BEATS: Structure across segments using beats: 'HOOK', 'TENSION', 'ESCALATION', 'REVELATION', and 'LOOP'.\n"
+        "4. TOPIC-ANCHORED VISUAL SHOTS: In each segment, provide 'visual_shots' with 2-3 micro-shot queries "
+        "DEEPLY ANCHORED in the topic aesthetic. NEVER use generic everyday queries like 'keys', 'hands typing', or 'city' without high-tech context (e.g. use 'cyber hacker typing decryption code on dark terminal', 'quantum processor chip with glowing qubit circuits', 'digital padlock dissolving into binary dust').\n"
+        "5. DUAL VISUAL QUERIES & SOURCE: Provide 'pexels_query' and 'sd_prompt'. Set 'asset_source' to 'comfyui' for futuristic, quantum, or conceptual imagery to guarantee 100% thematic relevance.\n"
+        "6. SEAMLESS CYCLICAL LOOP OUTRO: The 'loop_outro' field must be a 2 to 4 word UNPUNCTUATED connector clause (e.g. 'and that is why', 'which proves why', 'leaving us with') "
+        "that grammatically connects directly to the first word of the hook for infinite replay loops without any trailing period.\n"
+        "7. ACTIVE VERBS & TANGIBLE STAKES: Use active dynamic verbs ('simulate', 'permeate', 'collapse', 'annihilate') instead of passive phrasing like 'walk through'. "
+        "Never insert intra-phrase commas into compound adjectives (write 'military-grade encryption', NEVER 'military grade,').\n"
+        "8. ZERO FLUFF & 180 WPM BUDGET: Total spoken narration across all segments must be 75 to 95 words. High information density."
     )
 
     prompt = (
         f"Write an ultra-high-retention viral short-form video script on the topic: '{topic}'.\n"
         f"Category/Niche: {niche or 'general'}.\n"
-        f"Target duration: 30 to 45 seconds total across 4 to 5 narrative segments.\n"
+        f"Target duration: 30 to 35 seconds total across 4 to 5 narrative segments.\n"
         "Requirements:\n"
-        "- The 'hook' must be bold, intense, and under 12 words.\n"
+        "- Persona: Upbeat, electrifying, fast-paced delivery with infectious curiosity.\n"
+        "- The 'hook' must be bold, intense, personally threatening, and under 12 words.\n"
+        "- Segment 1 narration MUST NOT repeat the hook sentence; start immediately with new facts or tension.\n"
         "- Assign each segment a 'beat' ('HOOK', 'TENSION', 'ESCALATION', 'REVELATION', 'LOOP').\n"
-        "- In each segment, provide 'visual_shots' with 2 to 3 micro-shot visual queries (e.g. ['macro lens glowing circuit close up', 'drone aerial futuristic laboratory neon', 'rapid zoom server rack blinking blue']).\n"
-        "- Craft 'loop_outro' so the video loops seamlessly back into the hook.\n"
+        "- Each segment's 'duration_seconds' must be strictly between 4.0 and 10.0 seconds.\n"
+        "- Provide both 'pexels_query' (natural stock search) and 'sd_prompt' (cinematic SD1.5 prompt) for each segment.\n"
+        "- In each segment, provide 'visual_shots' with 2 to 3 micro-shot visual queries.\n"
+        "- Total spoken words across all segments must be between 75 and 95 words (approx 30s at 180 WPM).\n"
+        "- Ground all concepts in physical analogies (no abstract mathematical named theorems without physical analogies).\n"
+        "- Craft 'loop_outro' as a 2 to 4 word connector without a period that flows grammatically into the first word of your hook.\n"
         "Ensure all schema fields are strictly provided and valid."
     )
 
@@ -184,6 +227,38 @@ def get_valid_script(
             f"\n\nIMPORTANT REVISION FEEDBACK: Your previous draft failed verification:\n"
             f"{feedback}\n"
             f"Please strictly correct these issues and adhere to all requirements."
+        )
+
+    # Brainrot / Entertainment niche overlay — active when niche is 'entertainment'
+    # Injects cultural vocabulary and structural constraints that score high on the
+    # virality evaluator (aura signals, loop triggers, scroll-stop hook power words).
+    if niche and niche.lower() == "entertainment":
+        system_prompt += (
+            "\nBRAINROT ENTERTAINMENT MODE — MANDATORY OVERRIDES:\n"
+            "- You are writing for Gen Z / Gen Alpha brainrot culture. Every segment MUST use "
+            "at least one of these cultural signal words naturally: "
+            "'aura', 'lock in', 'sigma', 'skibidi', 'brainrot', 'lore', 'unhinged', 'based', "
+            "'NPC', 'ratio', 'actually', 'nobody', 'literally', 'wild', 'insane', 'dark', "
+            "'hidden', 'secret', 'they hid', 'wait'.\n"
+            "- The HOOK must contain at least 2 power-stop words from: "
+            "'secret', 'dark', 'hidden', 'nobody', 'literally', 'insane', 'wild', 'actually', 'truth'.\n"
+            "- EVERY segment must contain at least one LOOP TRIGGER phrase: "
+            "'wait', 'but here\'s the thing', 'plot twist', 'it gets worse', "
+            "'but then', 'the real truth', 'nobody talks about this', 'actually', 'origin'.\n"
+            "- Pacing: Write at 4.5 to 5.5 words per second (high-density, fast-fire delivery).\n"
+            "- Use self-aware meta language — the video can reference its own virality, "
+            "the algorithm, the scroll, or the viewer\'s brain directly.\n"
+            "- Title must contain CAPS, an emoji, or a number for high CTR."
+        )
+        prompt += (
+            "\n\nBRAINROT CULTURE REQUIREMENTS:\n"
+            "- Weave in Gen Z/Gen Alpha vocabulary: aura, lock in, sigma, skibidi, brainrot, lore, NPC, ratio.\n"
+            "- Start the hook with a scroll-stopping power phrase using words like: "
+            "'nobody', 'literally', 'actually', 'dark', 'hidden', 'secret', 'insane', 'wild'.\n"
+            "- Every segment must have at least one loop trigger: 'wait', 'but here\'s the thing', "
+            "'plot twist', 'it gets worse', 'nobody talks about this', 'actually', 'origin'.\n"
+            "- Target pacing: 4.5 to 5.5 words per second (fast, punchy, high-dopamine delivery).\n"
+            "- Make the viewer feel like they\'re losing aura by NOT knowing this."
         )
 
     last_failure_reason = "Unknown error"

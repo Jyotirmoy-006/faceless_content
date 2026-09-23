@@ -117,17 +117,17 @@ def test_model_routing_by_agent_role(temp_state_file, test_notifier, mock_accoun
     """Verifies strict Rule 14 model routing across agent capability tiers."""
     mgr = LLMManager(accounts=mock_accounts, state_path=temp_state_file, notifier_instance=test_notifier)
 
-    # High-capability: Creative Director only
+    # High-capability: Creative Director only (Pro tier ~25 RPD)
     assert mgr.resolve_model(AgentRole.CREATIVE_DIRECTOR) == "gemini-3.1-pro-preview"
 
-    # High-volume agents
-    assert mgr.resolve_model(AgentRole.BRAND_DESIGNER) == "gemini-3.6-flash"
+    # High-volume quality agents (Flash tier ~1,500 RPD)
     assert mgr.resolve_model(AgentRole.CHIEF_CRITIC) == "gemini-3.6-flash"
     assert mgr.resolve_model(AgentRole.COPYWRITER) == "gemini-3.6-flash"
     assert mgr.resolve_model(AgentRole.SCRIPTWRITER) == "gemini-3.6-flash"
     assert mgr.resolve_model(AgentRole.IDEATOR) == "gemini-3.6-flash"
 
-    # Budget tier
+    # Budget tier (Flash-Lite ~1,500 RPD)
+    assert mgr.resolve_model(AgentRole.BRAND_DESIGNER) == "gemini-3.5-flash-lite"
     assert mgr.resolve_model(AgentRole.STRATEGIST) == "gemini-3.5-flash-lite"
 
 

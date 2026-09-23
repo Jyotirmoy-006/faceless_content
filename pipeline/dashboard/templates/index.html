@@ -89,27 +89,99 @@
     }
     .agent-sprite {
       position: absolute;
-      transform: translate(-50%, -90%);
+      transform: translate(-50%, -100%);
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       user-select: none;
       pointer-events: auto;
+      height: 48px;
+      justify-content: flex-end;
     }
-    .agent-sprite.flip .agent-img {
-      transform: scaleX(-1);
+    .agent-body {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transform-origin: bottom center;
+      will-change: transform;
+      z-index: 2;
+    }
+    .agent-shadow {
+      position: absolute;
+      bottom: 2px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 32px;
+      height: 8px;
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0) 75%);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 1;
+      will-change: transform, opacity;
+      transition: transform 0.04s linear, opacity 0.04s linear;
     }
     .agent-img {
       width: 5.5vw;
       max-width: 66px;
       min-width: 36px;
       height: auto;
-      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.75));
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.65));
       transition: filter 0.15s ease;
+      image-rendering: pixelated !important;
+      image-rendering: -moz-crisp-edges !important;
+      image-rendering: crisp-edges !important;
+      -ms-interpolation-mode: nearest-neighbor !important;
     }
     .agent-sprite:hover .agent-img {
       filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.85));
+    }
+    .dust-particle {
+      position: absolute;
+      pointer-events: none;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: rgba(228, 228, 231, 0.65);
+      box-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
+      transform: translate(-50%, -50%);
+      animation: dustPuff 0.35s ease-out forwards;
+      z-index: 999;
+    }
+    @keyframes dustPuff {
+      0% {
+        opacity: 0.85;
+        transform: translate(-50%, -50%) scale(0.5);
+      }
+      50% {
+        opacity: 0.5;
+        transform: translate(calc(-50% + var(--vx, 0px)), calc(-50% - 5px)) scale(1.1);
+      }
+      100% {
+        opacity: 0;
+        transform: translate(calc(-50% + var(--vx, 0px) * 1.5), calc(-50% - 9px)) scale(1.4);
+      }
+    }
+    .zzz-bubble {
+      position: absolute;
+      bottom: 110%;
+      left: 60%;
+      font-family: monospace;
+      font-size: 10px;
+      font-weight: 800;
+      color: #cbd5e1;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      pointer-events: none;
+      animation: floatZzz 2.4s infinite ease-in-out;
+      white-space: nowrap;
+      z-index: 9999;
+    }
+    @keyframes floatZzz {
+      0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+      30% { opacity: 0.95; }
+      80% { opacity: 0.85; }
+      100% { opacity: 0; transform: translate(8px, -15px) scale(1.15); }
     }
     .agent-name-badge {
       margin-top: 2px;
@@ -738,6 +810,9 @@
           <a id="modal-video-agent-info" href="#" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all font-semibold" title="Download cognitive traces and inputs for every agent behind this video">
             <span>📥 Download Agent Info</span>
           </a>
+          <a id="modal-video-logs" href="#" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-700/50 transition-all font-semibold" title="Download execution logs for this video">
+            <span>📄 Download Video Logs</span>
+          </a>
           <a id="modal-video-download" href="#" download class="text-indigo-400 hover:underline">Download MP4</a>
         </div>
       </div>
@@ -774,6 +849,9 @@
           </button>
           <a id="sim-modal-download-btn" href="#" class="text-xs text-indigo-300 hover:text-white font-mono px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 transition-all font-semibold flex items-center gap-1.5" title="Download all agent traces as JSON">
             <span>📥 Download Agent Info (JSON)</span>
+          </a>
+          <a id="sim-modal-download-logs-btn" href="#" class="text-xs text-emerald-300 hover:text-white font-mono px-3 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 transition-all font-semibold flex items-center gap-1.5" title="Download raw execution logs">
+            <span>📄 Download Job Logs</span>
           </a>
           <button onclick="expandAllSimSteps()" class="text-xs text-zinc-400 hover:text-zinc-200 font-mono px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-all">Expand All</button>
           <button onclick="collapseAllSimSteps()" class="text-xs text-zinc-400 hover:text-zinc-200 font-mono px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-all">Collapse All</button>
@@ -897,6 +975,11 @@
 
   <!-- TOAST NOTIFICATION CONTAINER -->
   <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- THREE.JS & ARTICULATED ONE PIECE 3D ENGINE -->
+  <script src="/static/js/three.min.js"></script>
+  <script src="/static/js/three_character_builder.js"></script>
+  <script src="/static/js/one_piece_3d_engine.js"></script>
 
   <!-- APPLICATION LOGIC (Vanilla JS) -->
   <script>
@@ -1168,7 +1251,8 @@
           } else if (j.video_path) {
             const fname = j.video_path.split(/[\\/]/).pop();
             const ytParam = j.youtube_url ? `'${j.youtube_url}'` : "''";
-            actionHtml += `<button onclick="openVideoModal('${fname}', '${j.video_path}', '', ${ytParam}, '/api/jobs/${j.id}/simulation/download')" class="px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[11px] font-mono transition-all">Watch</button>`;
+            const videoWebUrl = `/videos/${encodeURIComponent(fname)}`;
+            actionHtml += `<button onclick="openVideoModal('${fname}', '${videoWebUrl}', '', ${ytParam}, '/api/jobs/${j.id}/simulation/download')" class="px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[11px] font-mono transition-all">Watch</button>`;
           }
           actionHtml += `</div>`;
 
@@ -1416,6 +1500,8 @@
       const downloadUrl = `/api/jobs/${jobId}/simulation/download`;
       if (headerDl) headerDl.href = downloadUrl;
       if (footerDl) footerDl.href = downloadUrl;
+      const logsDl = document.getElementById('sim-modal-download-logs-btn');
+      if (logsDl) logsDl.href = `/api/jobs/${jobId}/logs/download`;
       const simLinkBtn = document.getElementById('sim-modal-link-yt');
       if (ytLink) {
         ytLink.classList.add('hidden');
@@ -2074,14 +2160,21 @@
       const player = document.getElementById('modal-video-player');
       document.getElementById('modal-video-title').textContent = title;
       document.getElementById('modal-video-meta').textContent = sizeMb ? `${sizeMb} MB` : '';
-      document.getElementById('modal-video-download').href = url;
+
+      // Ensure web-playable URL (handles both relative endpoints and raw filesystem paths gracefully)
+      let resolvedUrl = url;
+      if (url && !url.startsWith('/') && !url.startsWith('http')) {
+        const fname = url.split(/[\\/]/).pop();
+        resolvedUrl = `/videos/${encodeURIComponent(fname)}`;
+      }
+      document.getElementById('modal-video-download').href = resolvedUrl;
 
       // YouTube Link handling
       const ytBtn = document.getElementById('modal-video-youtube');
       const ytLinkBtn = document.getElementById('modal-video-link-yt');
       let resolvedYt = youtubeUrl;
       if (!resolvedYt && window.allFinalArtifacts) {
-        const match = window.allFinalArtifacts.find(a => a.name === title || a.url === url);
+        const match = window.allFinalArtifacts.find(a => a.name === title || a.url === resolvedUrl || a.url === url);
         if (match && match.youtube_url) resolvedYt = match.youtube_url;
       }
       if (resolvedYt) {
@@ -2116,8 +2209,15 @@
         agentBtn.href = dlUrl;
       }
 
+      // Download Logs handling
+      const logsBtn = document.getElementById('modal-video-logs');
+      if (logsBtn) {
+        const fname = title || (url ? url.split(/[\\/]/).pop() : '');
+        logsBtn.href = `/api/videos/${encodeURIComponent(fname)}/logs/download`;
+      }
+
       player.pause();
-      player.src = url;
+      player.src = resolvedUrl;
       modal.classList.remove('hidden');
       player.load();
       const playPromise = player.play();
@@ -2565,6 +2665,11 @@
         // Initialize Scene Elements
         this.renderScene();
 
+        // Initialize Three.js 3D Articulated Physical Simulation Engine
+        if (window.OnePiece3DEngine) {
+          this.engine3d = new OnePiece3DEngine(this.container, this);
+        }
+
         // Start 60fps Game Loop
         this.lastTimestamp = performance.now();
         if (this.animId) cancelAnimationFrame(this.animId);
@@ -2582,7 +2687,63 @@
         if (!this.container) return;
         this.container.innerHTML = '';
 
-        // 1. Inject Furniture Overlays (Y-Sort Depth Obstacles)
+        // Inject Agent Interactive DOM Anchors (Speech Bubbles & Name Badges Floating Above 3D Rig)
+        this.agents.forEach(agent => {
+          const el = document.createElement('div');
+          el.id = `agent-sprite-${agent.id}`;
+          el.className = 'agent-sprite';
+          el.style.left = (agent.x / 10.24) + '%';
+          el.style.top = (agent.y / 4.2) + '%';
+          el.style.zIndex = Math.floor(agent.y) + 60;
+          el.onclick = () => this.inspectAgent(agent.id);
+
+          el.innerHTML = `
+            <div id="thought-bubble-${agent.id}" class="retro-speech-bubble hidden">
+              <span>${agent.icon}</span>
+              <span id="thought-text-${agent.id}">${agent.thought}</span>
+            </div>
+            <div id="zzz-${agent.id}" class="zzz-bubble hidden">Z z z...</div>
+            <div class="agent-name-badge">
+              <span id="agent-dot-${agent.id}" class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span>
+              <span>${agent.name.split(' ')[0]}</span>
+            </div>
+          `;
+          this.container.appendChild(el);
+          agent.element = el;
+          agent.zzzElement = el.querySelector(`#zzz-${agent.id}`);
+          agent.bubbleElement = el.querySelector(`#thought-bubble-${agent.id}`);
+          agent.thoughtTextElement = el.querySelector(`#thought-text-${agent.id}`);
+          agent.dotElement = el.querySelector(`#agent-dot-${agent.id}`);
+          agent.currentNode = agent.deskNode;
+
+          // Initialize Movement & Animation State Machine
+          agent.stepStartX = agent.x;
+          agent.stepStartY = agent.y;
+          agent.stepTargetX = agent.x;
+          agent.stepTargetY = agent.y;
+          agent.isStepping = false;
+          agent.stepTimer = 0.0;
+          agent.stepDuration = 0.22;
+          agent.idleTime = 0.0;
+          agent.idlePhase = Math.random() * Math.PI * 2;
+        });
+      },
+
+      // Graceful 2D Fallback if WebGL/hardware acceleration is unavailable
+      activate2DFallback(reason) {
+        console.warn('[VirtualStudio] Activating 2D graceful fallback mode:', reason);
+        this.is2DFallback = true;
+        this.engine3d = null;
+
+        if (this.container && !document.getElementById('fallback-pill')) {
+          const pill = document.createElement('div');
+          pill.id = 'fallback-pill';
+          pill.className = 'absolute top-2 left-2 z-[999] px-2.5 py-1 rounded bg-amber-950/85 border border-amber-600/70 text-amber-300 font-mono text-[10px] flex items-center gap-1.5 shadow-md';
+          pill.innerHTML = `<span>⚠️</span><span>2D Studio Fallback: ${reason || 'Hardware Acceleration Disabled'}</span>`;
+          this.container.appendChild(pill);
+        }
+
+        // Restore 2D furniture overlays
         this.FURNITURE_OVERLAYS.forEach(f => {
           const el = document.createElement('div');
           el.className = 'furniture-overlay';
@@ -2595,39 +2756,79 @@
           this.container.appendChild(el);
         });
 
-        // 2. Inject Agent DOM Elements
+        // Restore 2D image sprites on existing agent elements
         this.agents.forEach(agent => {
-          const el = document.createElement('div');
-          el.id = `agent-sprite-${agent.id}`;
-          el.className = 'agent-sprite';
-          el.style.left = (agent.x / 10.24) + '%';
-          el.style.top = (agent.y / 4.2) + '%';
-          el.style.zIndex = Math.floor(agent.y);
-          el.onclick = () => this.inspectAgent(agent.id);
-
-          el.innerHTML = `
-            <div id="thought-bubble-${agent.id}" class="retro-speech-bubble hidden">
-              <span>${agent.icon}</span>
-              <span id="thought-text-${agent.id}">${agent.thought}</span>
-            </div>
+          if (!agent.element) return;
+          const body = document.createElement('div');
+          body.id = `agent-body-${agent.id}`;
+          body.className = 'agent-body';
+          body.innerHTML = `
             <img id="agent-img-${agent.id}"
                  src="/static/img/office/${agent.id}.png"
                  alt="${agent.name}"
                  class="agent-img"
                  draggable="false" />
-            <div class="agent-name-badge">
-              <span id="agent-dot-${agent.id}" class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span>
-              <span>${agent.name.split(' ')[0]}</span>
-            </div>
           `;
-          this.container.appendChild(el);
-          agent.element = el;
-          agent.imgElement = el.querySelector(`#agent-img-${agent.id}`);
-          agent.bubbleElement = el.querySelector(`#thought-bubble-${agent.id}`);
-          agent.thoughtTextElement = el.querySelector(`#thought-text-${agent.id}`);
-          agent.dotElement = el.querySelector(`#agent-dot-${agent.id}`);
-          agent.currentNode = agent.deskNode;
+          const shadow = document.createElement('div');
+          shadow.id = `agent-shadow-${agent.id}`;
+          shadow.className = 'agent-shadow';
+          agent.element.insertBefore(shadow, agent.element.firstChild);
+          agent.element.insertBefore(body, agent.element.lastChild);
+          agent.bodyElement = body;
+          agent.shadowElement = shadow;
+          agent.imgElement = body.querySelector(`#agent-img-${agent.id}`);
         });
+      },
+
+      // Quantitative Performance & FPS Benchmark Harness
+      benchmark: {
+        active: false,
+        samples: [],
+        startTime: 0,
+        startHeap: null,
+        start() {
+          this.samples = [];
+          this.active = true;
+          this.startTime = performance.now();
+          this.startHeap = (window.performance && window.performance.memory) ? window.performance.memory.usedJSHeapSize : null;
+        },
+        record(dtMs) {
+          if (!this.active) return;
+          this.samples.push(dtMs);
+        },
+        stop() {
+          this.active = false;
+          return this.getReport();
+        },
+        getReport() {
+          if (this.samples.length === 0) return { error: 'No samples collected' };
+          const total = this.samples.reduce((a, b) => a + b, 0);
+          const avgMs = total / this.samples.length;
+          const sorted = [...this.samples].sort((a, b) => a - b);
+          const minMs = sorted[0];
+          const maxMs = sorted[sorted.length - 1];
+          const p95Ms = sorted[Math.floor(sorted.length * 0.95)];
+          const avgFps = 1000 / avgMs;
+          const minFps = 1000 / maxMs;
+          const maxFps = 1000 / minMs;
+          const currHeap = (window.performance && window.performance.memory) ? window.performance.memory.usedJSHeapSize : null;
+          const totalHeap = (window.performance && window.performance.memory) ? window.performance.memory.totalJSHeapSize : null;
+          return {
+            sampleCount: this.samples.length,
+            durationSec: Math.round((performance.now() - this.startTime) / 100) / 10,
+            avgFps: Math.round(avgFps * 10) / 10,
+            minFps: Math.round(minFps * 10) / 10,
+            maxFps: Math.round(maxFps * 10) / 10,
+            avgFrameTimeMs: Math.round(avgMs * 100) / 100,
+            minFrameTimeMs: Math.round(minMs * 100) / 100,
+            maxFrameTimeMs: Math.round(maxMs * 100) / 100,
+            p95FrameTimeMs: Math.round(p95Ms * 100) / 100,
+            startHeapMB: this.startHeap ? Math.round((this.startHeap / 1048576) * 100) / 100 : null,
+            usedHeapMB: currHeap ? Math.round((currHeap / 1048576) * 100) / 100 : null,
+            totalHeapMB: totalHeap ? Math.round((totalHeap / 1048576) * 100) / 100 : null,
+            heapDeltaMB: (this.startHeap && currHeap) ? Math.round(((currHeap - this.startHeap) / 1048576) * 100) / 100 : null
+          };
+        }
       },
 
       // BFS Shortest Path Algorithm on Walkable Nodes Graph
@@ -2667,66 +2868,201 @@
         return bestKey;
       },
 
-      // 60FPS GAME LOOP (Linear Movement & Dynamic Y-Sorting)
+      // Spawn Footstep Dust Puff Particle
+      spawnDustPuff(x, y, dir) {
+        if (!this.container) return;
+        for (let i = 0; i < 2; i++) {
+          const p = document.createElement('div');
+          p.className = 'dust-particle';
+          p.style.left = ((x + (Math.random() - 0.5) * 6) / 10.24) + '%';
+          p.style.top = ((y + 2 + Math.random() * 2) / 4.2) + '%';
+          p.style.setProperty('--vx', `${((Math.random() - 0.5) * 6 - dir * 3)}px`);
+          this.container.appendChild(p);
+          setTimeout(() => p.remove(), 380);
+        }
+      },
+
+      // 8-Bit Footstep Audio Tick
+      playFootstep() {
+        if (!this.sfxEnabled) return;
+        this.play8BitTone(180 + Math.random() * 40, 0.025, 'triangle', 0.02);
+      },
+
+      // 60FPS GAME LOOP (Discrete Stepping, Sine-Bob, Squash-and-Stretch, Grounding Shadow, Dynamic Y-Sorting)
       updateGameLoop(timestamp) {
-        const dt = Math.min((timestamp - this.lastTimestamp) / 1000, 0.1);
+        const frameDtMs = timestamp - (this.lastTimestamp || timestamp);
+        if (this.benchmark && this.benchmark.active && frameDtMs > 0) {
+          this.benchmark.record(frameDtMs);
+        }
+        const dt = Math.min(frameDtMs / 1000, 0.1);
         this.lastTimestamp = timestamp;
 
+        // 3D Physical Rig Kinematics & WebGL Render
+        if (this.engine3d) {
+          this.engine3d.update(dt, timestamp);
+        }
+
         for (const agent of this.agents) {
-          // 1. Waypoint Path Following (Linear Constant Speed)
+          let bobY = 0;
+          let scaleX = 1.0;
+          let scaleY = 1.0;
+          let shadowScale = 1.0;
+          let shadowOpacity = 0.65;
+
+          // 1. Waypoint Path Following with Discrete Stepping
           if (agent.path && agent.path.length > 0) {
-            const nextNodeKey = agent.path[0];
-            const target = this.NODES[nextNodeKey];
-            if (target) {
-              const dx = target.x - agent.x;
-              const dy = target.y - agent.y;
-              const dist = Math.hypot(dx, dy);
-              const step = agent.speed * dt;
+            agent.state = 'WALKING';
+            agent.idleTime = 0;
+            if (agent.zzzElement) agent.zzzElement.classList.add('hidden');
 
-              if (dist <= step) {
-                agent.x = target.x;
-                agent.y = target.y;
-                agent.currentNode = agent.path.shift();
+            // If not currently in a step, initiate the next discrete hop
+            if (!agent.isStepping) {
+              const nextNodeKey = agent.path[0];
+              const target = this.NODES[nextNodeKey];
+              if (target) {
+                const dx = target.x - agent.x;
+                const dy = target.y - agent.y;
+                const dist = Math.hypot(dx, dy);
 
-                // Reached final waypoint
-                if (agent.path.length === 0 && agent.onArrival) {
-                  const cb = agent.onArrival;
-                  agent.onArrival = null;
-                  cb();
-                }
-              } else {
-                const vx = (dx / dist) * agent.speed;
-                const vy = (dy / dist) * agent.speed;
-                agent.x += vx * dt;
-                agent.y += vy * dt;
+                if (dist <= 2.5) {
+                  // Reached waypoint node
+                  agent.x = target.x;
+                  agent.y = target.y;
+                  agent.currentNode = agent.path.shift();
 
-                // Directional Sprite Flip based on X velocity
-                if (vx < -2) {
-                  agent.flip = true;
-                } else if (vx > 2) {
-                  agent.flip = false;
+                  if (agent.path.length === 0) {
+                    // Final arrival at destination!
+                    agent.isStepping = false;
+                    agent.state = 'IDLE';
+                    if (agent.onArrival) {
+                      const cb = agent.onArrival;
+                      agent.onArrival = null;
+                      cb();
+                    }
+                  }
+                } else {
+                  // Discrete hop: 10px to 14px step
+                  const stepSize = Math.min(12.0, dist);
+                  const stepRatio = stepSize / dist;
+
+                  agent.stepStartX = agent.x;
+                  agent.stepStartY = agent.y;
+                  agent.stepTargetX = agent.x + dx * stepRatio;
+                  agent.stepTargetY = agent.y + dy * stepRatio;
+                  agent.isStepping = true;
+                  agent.stepTimer = 0.0;
+                  // Dynamic step duration based on step distance (~0.18s to 0.24s)
+                  agent.stepDuration = 0.18 + (stepSize / 12.0) * 0.06;
+
+                  // Directional Facing: Flip horizontally based on movement direction (no moonwalking!)
+                  if (dx < -1.0) {
+                    agent.flip = true;
+                  } else if (dx > 1.0) {
+                    agent.flip = false;
+                  }
                 }
               }
             }
-          } else if (agent.state === 'IDLE' && !this.demoMode) {
-            // 2. Idle Wandering AI (pick nearby node within ~65px)
-            agent.wanderTimer -= dt;
-            if (agent.wanderTimer <= 0) {
-              agent.wanderTimer = 4.0 + Math.random() * 6.0;
-              this.wanderAgent(agent);
+
+            // If actively executing a discrete step
+            if (agent.isStepping) {
+              agent.stepTimer += dt;
+              const p = Math.min(1.0, agent.stepTimer / agent.stepDuration);
+
+              // Ease-in-out hop interpolation
+              const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+              agent.x = agent.stepStartX + (agent.stepTargetX - agent.stepStartX) * eased;
+              agent.y = agent.stepStartY + (agent.stepTargetY - agent.stepStartY) * eased;
+
+              // Parabolic footstep bob (apex = 6.5px in the air)
+              const hopSine = Math.sin(p * Math.PI);
+              bobY = -hopSine * 6.5;
+
+              // Squash-and-Stretch: Stretch during mid-air ascent, Squash on landing contact
+              const stretch = hopSine * 0.12;
+              scaleY = 1.0 + stretch;
+              scaleX = 1.0 - stretch * 0.6;
+
+              // Grounding Shadow: Shrinks and fades as sprite hops into air, expands on ground contact
+              shadowScale = 1.0 - hopSine * 0.28;
+              shadowOpacity = 0.65 - hopSine * 0.32;
+
+              // Step Completion / Landing Trough
+              if (p >= 1.0) {
+                agent.x = agent.stepTargetX;
+                agent.y = agent.stepTargetY;
+                agent.isStepping = false;
+
+                // Ground landing impact effects
+                scaleY = 0.90; // Touchdown squash
+                scaleX = 1.10;
+                shadowScale = 1.15;
+                shadowOpacity = 0.75;
+
+                // Spawn small dust puff particle
+                this.spawnDustPuff(agent.x, agent.y, agent.flip ? -1 : 1);
+
+                // Play 8-bit footstep sound tick
+                this.playFootstep();
+              }
+            }
+          } else {
+            // Idle / Working state
+            agent.isStepping = false;
+            agent.idleTime += dt;
+
+            if (agent.state === 'EXECUTING') {
+              // Working at desk: subtle energetic typing jitter / bob
+              const workSine = Math.sin(timestamp * 0.008 + agent.idlePhase);
+              bobY = workSine * 1.8;
+              scaleY = 1.0 + workSine * 0.02;
+              scaleX = 1.0 - workSine * 0.02;
+              shadowScale = 1.0 - workSine * 0.04;
+              shadowOpacity = 0.65;
+            } else {
+              // Idle at desk: subtle gentle breathing bob
+              const breath = Math.sin(timestamp * 0.0025 + agent.idlePhase);
+              bobY = breath * 1.5;
+              scaleY = 1.0 + breath * 0.02;
+              scaleX = 1.0 - breath * 0.015;
+              shadowScale = 1.0 - breath * 0.05;
+              shadowOpacity = 0.55 + breath * 0.08;
+
+              // Sleeping animation after 18s idle when not in demo mode
+              if (agent.idleTime > 18.0 && !this.demoMode) {
+                if (agent.zzzElement) agent.zzzElement.classList.remove('hidden');
+              } else {
+                if (agent.zzzElement) agent.zzzElement.classList.add('hidden');
+              }
+
+              // Autonomous idle wandering if enabled
+              if (!this.demoMode) {
+                agent.wanderTimer -= dt;
+                if (agent.wanderTimer <= 0) {
+                  agent.wanderTimer = 5.0 + Math.random() * 7.0;
+                  this.wanderAgent(agent);
+                }
+              }
             }
           }
 
-          // 3. DYNAMIC DEPTH SORTING (The Mandatory Y-Sort Requirement)
+          // 2. DYNAMIC DEPTH SORTING & TRANSFORMS
           if (agent.element) {
             agent.element.style.left = (agent.x / 10.24) + '%';
             agent.element.style.top = (agent.y / 4.2) + '%';
-            agent.element.style.zIndex = Math.floor(agent.y);
+            // Y-Sorting with speech bubbles floating on top of 3D canvas
+            agent.element.style.zIndex = Math.floor(agent.y) + 60;
 
-            if (agent.flip) {
-              agent.element.classList.add('flip');
-            } else {
-              agent.element.classList.remove('flip');
+            // Apply body squash, stretch, bob, and horizontal flip
+            if (agent.bodyElement) {
+              const flipFactor = agent.flip ? -1 : 1;
+              agent.bodyElement.style.transform = `translateY(${bobY.toFixed(2)}px) scale(${((scaleX * flipFactor)).toFixed(3)}, ${scaleY.toFixed(3)})`;
+            }
+
+            // Apply grounding shadow scale & opacity
+            if (agent.shadowElement) {
+              agent.shadowElement.style.transform = `translateX(-50%) scale(${shadowScale.toFixed(2)})`;
+              agent.shadowElement.style.opacity = shadowOpacity.toFixed(2);
             }
           }
         }

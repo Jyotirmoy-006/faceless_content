@@ -52,14 +52,26 @@ from pipeline.core.audio_processor import (
     get_punctuation_pause_ms,
     assemble_continuous_narration
 )
-from pipeline.core.stage_verifier import (
-    verify_voice_actor,
-    verify_art_director,
-    verify_editor,
-    estimate_spoken_length,
-    run_stage_with_verification,
-    StageVerificationError
+from pipeline.agents.department_heads import (
+    head_of_audio,
+    head_of_art,
+    head_of_post,
+    DepartmentGateRejectionError,
 )
+
+
+def estimate_spoken_length(script: Script, target_wpm: float = 145.0) -> float:
+    """Estimates total spoken narration duration from script narration word count.
+
+    Never treats the LLM-generated duration_seconds field as authoritative over
+    the actual words spoken (Phase 4 duration inversion).
+    """
+    words = [w for seg in script.segments for w in seg.narration.split()]
+    if script.hook and script.hook.strip() and script.hook.strip().lower() not in script.segments[0].narration.lower():
+        words = script.hook.split() + words
+    spoken_seconds = (len(words) / target_wpm) * 60.0
+    pause_allowance = max(0, len(script.segments) - 1) * 0.32
+    return max(spoken_seconds + pause_allowance, 2.0)
 
 # Configure module logger
 logger = logging.getLogger("director")
@@ -175,19 +187,19 @@ def synthesize_chunk_edgetts(
 
 def synthesize_segment_narration(
     segment_text: str,
-    voice: str = "en-US-AndrewMultilingualNeural",
+    voice: str = "af_bella*0.6+bf_isabella*0.4",
     output_path: Optional[Path] = None,
     temp_dir: Optional[Path] = None,
     mock_edge_failure: bool = False,
-    is_hook: bool = False
+    is_hook: bool = False,
+    rate_override: Optional[str] = None
 ) -> Tuple[Path, str, float, float]:
     """Synthesizes an entire script segment's voiceover using VoiceActor agent (Rule 11).
 
     Applies:
-    - Expressive SSML wrappers with prosody and punctuation pauses (180ms/320ms).
-    - Default narrative-driven voice: en-US-AndrewMultilingualNeural.
+    - Expressive CPU-only Kokoro voice blend (Bella 60% + Isabella 40% speedrunner).
     - Two-pass EBU R128 loudness normalization to -14.0 LUFS / -1.5 dBTP.
-    - Fallback to local Piper TTS if Edge-TTS fails.
+    - Fallback to local Piper TTS if needed.
 
     Returns:
         Tuple[Path, str, float, float]:
@@ -207,7 +219,8 @@ def synthesize_segment_narration(
         temp_dir=t_dir,
         mock_edge_failure=mock_edge_failure,
         target_lufs=-14.0,
-        target_tp=-1.5
+        target_tp=-1.5,
+        rate_override=rate_override
     )
 
 
@@ -278,8 +291,8 @@ def synthesize_narration(
         # Standardize to 48kHz WAV
         wav_48 = convert_to_wav48k(raw_target, t_dir / f"chunk_{i:03d}_48k.wav")
 
-        # Two-pass EBU R128 loudness normalization to -16 LUFS
-        norm_wav, stats = normalize_loudness_ebu_r128(wav_48, t_dir / f"chunk_{i:03d}_norm.wav", target_lufs=-16.0)
+        # Two-pass EBU R128 loudness normalization to -14 LUFS
+        norm_wav, stats = normalize_loudness_ebu_r128(wav_48, t_dir / f"chunk_{i:03d}_norm.wav", target_lufs=-14.0)
 
         # Strip leading/trailing dead air
         trim_wav, _ = strip_silence(norm_wav, t_dir / f"chunk_{i:03d}_trim.wav", threshold_db=-45.0, pad_ms=20.0)
@@ -460,7 +473,7 @@ def run_gpu_worker(
 def orchestrate_video(
     script: Script,
     output_path: Path,
-    voice: str = "en-US-AndrewMultilingualNeural",
+    voice: str = "af_bella*0.6+bf_isabella*0.4",
     verification_history: Optional[Dict[str, Any]] = None
 ) -> Path:
     """Coordinates full video assembly from Script through narration, assets, and render."""
@@ -478,23 +491,32 @@ def orchestrate_video(
     seg_durations: List[float] = []
 
     def _execute_voice_actor(feedback: Optional[str] = None) -> Path:
+        rate_override = None
         if feedback:
             logger.info(f"[VOICE_ACTOR_RETRY] Engaging corrective voice synthesis: {feedback}")
+            if "deviate" in feedback.lower() or "duration" in feedback.lower():
+                rate_override = "+12%"
         seg_audio_paths.clear()
         seg_pauses_ms.clear()
         seg_durations.clear()
         logger.info(f"Synthesizing narration for {len(script.segments)} script segments (Duration Inversion)...")
         for i, seg in enumerate(script.segments):
             seg_audio_out = staging_dir / "tts" / f"tts_seg_{i:02d}.wav"
+            seg_text = seg.narration.strip()
+            if i == 0 and script.hook and script.hook.strip() and script.hook.strip().lower() not in seg_text.lower():
+                seg_text = f"{script.hook.strip()} {seg_text}"
             clean_wav, engine, speech_dur, pause_dur = synthesize_segment_narration(
-                segment_text=seg.narration,
+                segment_text=seg_text,
                 voice=voice,
                 output_path=seg_audio_out,
                 temp_dir=staging_dir / "tts" / f"work_{i:02d}",
-                is_hook=(i == 0)
+                is_hook=(i == 0),
+                rate_override=rate_override
             )
             if i == len(script.segments) - 1:
                 pause_dur = 0.0  # Zero trailing dead-air at the conclusion of the video
+            else:
+                pause_dur = max(0.28, pause_dur)  # Natural breath pause between segments
             seg_audio_paths.append(clean_wav)
             seg_pauses_ms.append(pause_dur * 1000.0)
 
@@ -516,10 +538,11 @@ def orchestrate_video(
         return assembled_audio
 
     expected_spoken_len = estimate_spoken_length(script)
-    audio_path, va_history = run_stage_with_verification(
-        stage_name="VOICE_ACTOR",
-        execute_fn=_execute_voice_actor,
-        verify_fn=lambda p: verify_voice_actor(p, expected_duration=expected_spoken_len),
+    initial_audio = _execute_voice_actor()
+    audio_path, va_history = head_of_audio.enforce_gate(
+        initial_artifact=initial_audio,
+        produce_fn=_execute_voice_actor,
+        context={"expected_duration": expected_spoken_len},
         max_retries=2
     )
     if verification_history is not None:
@@ -527,13 +550,23 @@ def orchestrate_video(
 
     # Step 2: Transcribe narration audio with Whisper (THROUGH GPU LOCK)
     srt_path = staging_dir / "subtitles.srt"
-    logger.info("Invoking Whisper worker through GPU lock...")
+    spoken_parts = []
+    if script.hook and script.hook.strip():
+        spoken_parts.append(script.hook.strip())
+    for seg in script.segments:
+        spoken_parts.append(seg.narration.strip())
+    if script.loop_outro and script.loop_outro.strip():
+        spoken_parts.append(script.loop_outro.strip())
+    elif script.cta and script.cta.strip():
+        spoken_parts.append(script.cta.strip())
+    full_narration_text = " ".join(spoken_parts)
     run_gpu_worker(
         worker_name="whisper_worker.py",
         worker_args=[
             "--audio", str(audio_path),
             "--output", str(srt_path),
-            "--device", "cuda"
+            "--device", "cuda",
+            "--script-text", full_narration_text
         ]
     )
 
@@ -547,11 +580,15 @@ def orchestrate_video(
     logger.info(f"[ART_DIRECTOR] Unpacked {len(shot_plans)} micro-cut shot plans across {len(script.segments)} segments.")
 
     sourced_assets: List[Tuple[Path, str]] = []
+    used_paths: Set[Path] = set()
+    used_pexels_ids: Set[int] = set()
     for shot in shot_plans:
         asset_path, src_type = source_shot_asset(
             shot=shot,
             cache_dir=staging_dir / "art_director",
-            allow_pexels_fallback=True
+            allow_pexels_fallback=True,
+            used_paths=used_paths,
+            used_pexels_ids=used_pexels_ids
         )
         sourced_assets.append((asset_path, shot.query))
 
@@ -572,25 +609,35 @@ def orchestrate_video(
         master_visual_path = staging_dir / "master_visual.mp4"
         return assemble_master_visual(norm_clips, master_visual_path, fps=30)
 
-    master_visual, art_history = run_stage_with_verification(
-        stage_name="ART_DIRECTOR",
-        execute_fn=_execute_art_director,
-        verify_fn=verify_art_director,
+    initial_master_visual = _execute_art_director()
+    master_visual, art_history = head_of_art.enforce_gate(
+        initial_artifact=initial_master_visual,
+        produce_fn=_execute_art_director,
         max_retries=2
     )
     if verification_history is not None:
         verification_history["art_director"] = [r.to_dict() for r in art_history]
 
     # Assemble Multi-Layer Sound Design: Voiceover + Ducked BGM + Transition SFX
-    from pipeline.core.audio_processor import mix_voice_bgm_sfx
+    from pipeline.core.sound_designer import mix_voice_bgm_sfx
     master_audio_path = staging_dir / "master_audio_mixed.wav"
-    logger.info(f"Mixing multi-layer audio with {len(cut_timestamps)} transition SFX cues and ducked BGM...")
+
+    # Synchronize subtle transition SFX with visual cuts (spaced >= 2.0s apart to avoid sonic clutter)
+    sfx_cues: List[float] = []
+    last_sfx_t = -999.0
+    for ct in cut_timestamps:
+        if ct > 0.8 and (ct - last_sfx_t) >= 2.0:
+            sfx_cues.append(round(ct, 2))
+            last_sfx_t = ct
+
+    logger.info(f"Mixing multi-layer audio with {len(sfx_cues)} cut-synchronized SFX cues and ducked BGM...")
     mix_voice_bgm_sfx(
         voice_path=audio_path,
         output_path=master_audio_path,
-        sfx_timestamps=cut_timestamps,
+        sfx_timestamps=sfx_cues,
         sfx_type="whoosh",
-        bgm_volume_db=-22.0
+        bgm_volume_db=-22.0,
+        sfx_volume_offset=-25.0
     )
 
     # -------------------------------------------------------------------------
@@ -609,13 +656,24 @@ def orchestrate_video(
                 "--srt", str(srt_path)
             ]
         )
+        if output_path.exists():
+            try:
+                from pipeline.core.audio_processor import measure_loudness_ebu_r128
+                post_stats = measure_loudness_ebu_r128(output_path)
+                logger.info(
+                    f"[DIRECTOR] Delivered Master Audio (post-mux): "
+                    f"LUFS={post_stats.get('input_i', -99):.2f}, "
+                    f"True Peak={post_stats.get('input_tp', -99):.2f} dBTP"
+                )
+            except Exception as ex:
+                logger.warning(f"Could not measure delivered audio loudnorm: {ex}")
         return output_path
 
 
-    final_rendered_path, editor_history = run_stage_with_verification(
-        stage_name="EDITOR",
-        execute_fn=_execute_editor,
-        verify_fn=verify_editor,
+    initial_editor_output = _execute_editor()
+    final_rendered_path, editor_history = head_of_post.enforce_gate(
+        initial_artifact=initial_editor_output,
+        produce_fn=_execute_editor,
         max_retries=2
     )
     if verification_history is not None:

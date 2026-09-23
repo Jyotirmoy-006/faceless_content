@@ -118,10 +118,11 @@ def generate_karaoke_ass(
     output_ass_path: Path,
     words_per_chunk: int = 3,
     font_size: float = 64.0,
-    margin_v: int = 520,
-    highlight_bgr: str = "&H0000FFFF&"  # Vivid Yellow (&H00BBGGRR&)
+    margin_v: int = 680,
+    highlight_bgr: str = "&H0000FFFF&",  # Vivid Yellow (&H00BBGGRR&)
+    script_text: Optional[str] = None
 ) -> Path:
-    """Builds an animated, high-contrast kinetic ASS caption track centered at Y ≈ 1400.
+    """Builds an animated, high-contrast kinetic ASS caption track centered at Y ≈ 1180 (Safe Zone).
 
     Delegates to pipeline.subtitles.generator.generate_kinetic_ass for kinetic word scaling
     and positioning while preserving backwards compatibility.
@@ -135,5 +136,6 @@ def generate_karaoke_ass(
         font_name="Montserrat Black",
         font_size=font_size,
         highlight_color_bgr=color,
-        center_y=TARGET_Y
+        center_y=TARGET_Y,
+        script_text=script_text
     )

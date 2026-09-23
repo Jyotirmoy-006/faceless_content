@@ -13,7 +13,7 @@ import concurrent.futures
 import time
 from unittest import TestCase
 
-from pipeline.core.rate_limiter import SingleAccountRateLimiter
+from pipeline.core.rate_limiter import SingleAccountRateLimiter, AccountRateLimiterPool
 
 
 class TestSingleAccountRateLimiter(TestCase):
@@ -88,3 +88,19 @@ class TestSingleAccountRateLimiter(TestCase):
         self.assertEqual(status["total_requests_acquired"], 1)
         self.assertEqual(status["current_rpm"], 1)
         self.assertIsNotNone(status["seconds_since_last_call"])
+
+    def test_account_rate_limiter_pool_isolation(self) -> None:
+        """Verifies that separate accounts have independent rate limits and do not block each other."""
+        pool = AccountRateLimiterPool(max_rpm=2, min_delay_seconds=0.2)
+        pool.reset_all()
+
+        # Account 1 acquires 2 slots (filling its 2 RPM capacity)
+        self.assertTrue(pool.acquire(account_id=1, timeout=0.1))
+        self.assertTrue(pool.acquire(account_id=1, timeout=0.3))
+        # Account 1 third call should be blocked by window cap
+        self.assertFalse(pool.acquire(account_id=1, timeout=0.05))
+
+        # Account 2 has completely independent capacity and must succeed immediately
+        t0 = time.monotonic()
+        self.assertTrue(pool.acquire(account_id=2, timeout=0.1))
+        self.assertLess(time.monotonic() - t0, 0.15)

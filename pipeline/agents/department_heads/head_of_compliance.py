@@ -56,7 +56,7 @@ class HeadOfCompliance(BaseDepartmentHead):
 
         # 1. Quota Pre-Flight Check (if publishing to YouTube)
         if not skip_publish:
-            if not quota_tracker.can_spend(YOUTUBE_VIDEO_UPLOAD_COST):
+            if not quota_tracker.has_budget(YOUTUBE_VIDEO_UPLOAD_COST):
                 return DepartmentGateResult(
                     passed=False,
                     department=self.department_name,

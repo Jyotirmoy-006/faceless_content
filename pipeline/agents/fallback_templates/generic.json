@@ -8,19 +8,45 @@
       "segment_index": 1,
       "narration": "Most everyday phenomena hold secrets we completely overlook in daily life.",
       "visual_query": "mysterious glowing galaxy or macro physics phenomenon cinematic",
-      "duration_seconds": 9.0
+      "visual_shots": [
+        "macro glowing physics particle phenomenon",
+        "deep space galaxy swirling stars cinematic",
+        "close up inquisitive human eye iris reflection"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 2,
       "narration": "When researchers looked closer, the reality overturned decades of common assumptions.",
       "visual_query": "scientist looking through advanced microscope modern lab high detail",
-      "duration_seconds": 10.0
+      "visual_shots": [
+        "scientist looking through advanced microscope",
+        "holographic 3d data graph rotating rapidly",
+        "extreme macro crystal formation glowing"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 3,
       "narration": "Understanding this shifts how you perceive the world around you starting today.",
       "visual_query": "person looking at sunrise city horizon contemplative epic lighting",
-      "duration_seconds": 11.0
+      "visual_shots": [
+        "person looking at sunrise city horizon epic lighting",
+        "time lapse clouds rolling over mountain peak",
+        "slow motion droplet splashing into calm water ripple"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 4,
+      "narration": "Every breakthrough starts by questioning what everyone took for granted.",
+      "visual_query": "futuristic lightbulb glowing filament dark studio",
+      "visual_shots": [
+        "macro vintage lightbulb filament glowing warm amber",
+        "abstract neon geometric network connecting nodes",
+        "wide cinematic drone view futuristic skyline"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Follow for more mind-bending discoveries every day."

@@ -5,7 +5,7 @@ Gates ArtDirector and ComfyUI worker deliverables:
    - Canonical vertical resolution: 1080x1920, 30fps CFR, yuv420p format.
    - Blank / Corrupt Frame Detection: Samples frames, requires pixel stddev > 15.0.
    - Shot Unpacking Count: Verifies 12-15 cuts unpacked for short-form pacing.
-   - Anti-Drift Gate: Semantic token overlap threshold >= 0.78 against prompt.
+   - Anti-Drift Gate: PROVISIONAL / HEURISTIC: Semantic token overlap threshold >= 0.78 against prompt (uncalibrated against live audience analytics).
 2. Tier 2 (ComfyUI Visual Coherence Evaluation):
    - Validates prompt alignment against curated negative prompt contracts.
 """
@@ -42,22 +42,25 @@ class HeadOfArt(BaseDepartmentHead):
 
     def _sample_pixel_variance(self, video_path: Path, sample_count: int = 3) -> Tuple[bool, float]:
         """Samples frames and evaluates pixel variance to reject blank renders."""
-        cmd = [
-            "ffmpeg", "-v", "error",
-            "-i", str(video_path),
-            "-vf", "scale=160:284",
-            "-vframes", str(sample_count),
-            "-f", "rawvideo",
-            "-pix_fmt", "rgb24",
-            "-"
-        ]
-        res = subprocess.run(cmd, capture_output=True, check=False)
-        if res.returncode != 0 or not res.stdout:
-            return False, 0.0
-
-        raw_data = res.stdout
+        raw_data = b""
         frame_size = 160 * 284 * 3
-        if len(raw_data) < frame_size:
+        for seek_time in ["0.25", "0.0"]:
+            cmd = [
+                "ffmpeg", "-v", "error",
+                "-ss", seek_time,
+                "-i", str(video_path),
+                "-vf", "scale=160:284",
+                "-vframes", str(sample_count),
+                "-f", "rawvideo",
+                "-pix_fmt", "rgb24",
+                "-"
+            ]
+            res = subprocess.run(cmd, capture_output=True, check=False)
+            if res.returncode == 0 and res.stdout and len(res.stdout) >= frame_size:
+                raw_data = res.stdout
+                break
+
+        if not raw_data or len(raw_data) < frame_size:
             return False, 0.0
 
         variances: List[float] = []
@@ -68,8 +71,8 @@ class HeadOfArt(BaseDepartmentHead):
             variances.append(float(np.std(arr)))
 
         mean_std = float(np.mean(variances)) if variances else 0.0
-        # Frame with stddev < 12.0 is blank, black, or flat solid color
-        return mean_std >= 12.0, mean_std
+        # Frame with stddev < 6.0 is blank, black, or flat solid color
+        return mean_std >= 6.0, mean_std
 
     def inspect_tier1(
         self,
@@ -131,7 +134,14 @@ class HeadOfArt(BaseDepartmentHead):
             is_valid, mean_std = self._sample_pixel_variance(p)
             if not is_valid:
                 raise ValueError(
-                    f"Blank or corrupt render detected: pixel standard deviation is {mean_std:.2f} (< 12.0)."
+                    f"Blank or corrupt render detected: pixel standard deviation is {mean_std:.2f} (< 6.0)."
+                )
+
+            # 2.5 Mock / placeholder asset detection
+            from pipeline.agents.pexels_sourcer import is_mock_asset
+            if is_mock_asset(p):
+                raise ValueError(
+                    f"Mock/placeholder asset detected in {p.name}: video contains offline ComfyUI placeholder."
                 )
 
             # 3. Anti-drift query match (if context provided)

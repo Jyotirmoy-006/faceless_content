@@ -3,8 +3,8 @@
 Gates Ideator and Copywriter/Scriptwriter deliverables:
 1. Tier 1 (Deterministic Structural & Retention Gate):
    - Validates IdeaConcept and Script schema contracts.
-   - Word density pacing (2.0 to 3.2 words/second).
-   - Micro-shot unpacking requirement (visual_shots present or avg shot <= 3.2s).
+   - Word density pacing (PROVISIONAL / HEURISTIC: 2.0 to 3.2 words/second empirical target; uncalibrated against production channel analytics).
+   - Micro-shot unpacking requirement (PROVISIONAL / HEURISTIC: avg shot <= 3.2s pacing threshold).
    - Banned opener eradication ("did you know", "hey guys", "in this video").
    - Seamless loop outro integrity (no terminal goodbyes).
 2. Tier 2 (Semantic Narrative Evaluation):
@@ -14,6 +14,7 @@ Gates Ideator and Copywriter/Scriptwriter deliverables:
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Dict, Optional
 
@@ -48,6 +49,42 @@ class HeadOfStory(BaseDepartmentHead):
             role=AgentRole.HEAD_OF_STORY,
         )
 
+    def _check_visual_tractability(self, concept: IdeaConcept) -> tuple[bool, str]:
+        """Validates that concept can be depicted with physical real-world visuals."""
+        combined_text = f"{concept.topic} {concept.angle}".lower()
+
+        # Abstract terms that are intractable for short-form video unless anchored
+        abstract_indicators = [
+            "source code", "python syntax", "coding syntax", "javascript closures",
+            "writing code", "regex pattern", "software bug fix", "git merge conflict",
+            "git merge", "abstract algorithm", "class inheritance", "variable scoping",
+            "memory pointer syntax", "python gil", "software architecture diagrams",
+            "cloud database schema", "pure mathematics formula", "abstract logic"
+        ]
+
+        # Tangible physical anchors that make a technical topic visualizable
+        physical_anchors = [
+            "supercomputer", "datacenter", "satellite", "robot", "chip", "hardware",
+            "fiber optic", "submersible", "cable", "telescope", "laser", "quantum processor",
+            "factory", "microscope", "battery", "engine", "drone", "reactor", "lithography",
+            "silicon wafer", "qubit", "cryogenic", "server rack", "antenna", "submarine",
+            "particle accelerator", "spacecraft", "materials", "magnetic", "device", "physical"
+        ]
+
+        for term in abstract_indicators:
+            if term in combined_text:
+                # Strip negations (e.g. "without hardware", "no hardware", "zero hardware")
+                text_no_negation = re.sub(r'\b(without|no|zero|lack of)\s+\w+', '', combined_text)
+                has_anchor = any(re.search(r'\b' + re.escape(anchor) + r'\b', text_no_negation) for anchor in physical_anchors)
+                if not has_anchor:
+                    return False, (
+                        f"Concept lacks physical visual tractability: '{term}' is an abstract concept "
+                        "without concrete physical anchors. Re-anchor to physical hardware, facilities, "
+                        "or real-world mechanisms (e.g., chips, robots, submersibles, datacenters)."
+                    )
+
+        return True, ""
+
     def inspect_tier1(
         self,
         artifact: Any,
@@ -67,6 +104,20 @@ class HeadOfStory(BaseDepartmentHead):
                     raise ValueError("Concept angle is too short (< 5 characters).")
                 if not (15 <= concept.target_duration <= 60):
                     raise ValueError(f"Target duration {concept.target_duration}s outside [15s, 60s].")
+
+                # Visual Tractability Gate
+                is_tractable, tractability_err = self._check_visual_tractability(concept)
+                if not is_tractable:
+                    return DepartmentGateResult(
+                        passed=False,
+                        department=self.department_name,
+                        head_title=self.head_title,
+                        tier=1,
+                        feedback=tractability_err,
+                        details={"type": "IdeaConcept", "topic": concept.topic, "error": "visual_tractability_failure"},
+                        latency_seconds=time.time() - t0,
+                    )
+
                 return DepartmentGateResult(
                     passed=True,
                     department=self.department_name,
@@ -126,7 +177,7 @@ class HeadOfStory(BaseDepartmentHead):
                     latency_seconds=time.time() - t0,
                 )
 
-        # Word density pacing
+        # Word density pacing (PROVISIONAL / HEURISTIC: Empirical target 2.0-3.2 words/sec; uncalibrated against live audience analytics)
         total_duration = script.total_estimated_duration()
         all_words = len([w for seg in script.segments for w in seg.narration.split()])
         words_per_second = all_words / max(total_duration, 1.0)

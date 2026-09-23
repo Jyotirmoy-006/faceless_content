@@ -34,6 +34,7 @@ from pipeline.core.llm_manager import llm_manager, AgentRole
 from pipeline.core.quota_tracker import (
     quota_tracker,
     QuotaTracker,
+    COST_VIDEOS_LIST,
     COST_CHANNELS_LIST,
     COST_PLAYLIST_ITEMS_LIST,
     COST_ANALYTICS_REPORTS_QUERY,
@@ -71,8 +72,8 @@ class OptimalSchedule(BaseModel):
     best_publishing_hour_utc: int = Field(default=15, description="Best publishing hour in UTC (0-23)")
     recommended_tags: list[str] = Field(default_factory=list, description="Recommended discovery tags")
     primary_hashtags: list[str] = Field(default_factory=list, description="Primary hashtags")
-    estimated_retention_benchmark: float = Field(default=80.0, description="Benchmark retention percentage")
-    pacing_recommendation: str = Field(default="", description="Pacing and hook advice")
+    estimated_retention_benchmark: Optional[float] = Field(default=None, description="Grounded retention benchmark if historical performance exists")
+    pacing_recommendation: str = Field(default="", description="Deprecated field retained for backward compatibility")
     summary: str = Field(default="", description="Concise strategy summary")
 
 
@@ -287,6 +288,111 @@ class StrategistAgent:
         )
         return videos
 
+    def get_trending_topics(
+        self,
+        niche: str = "tech",
+        region_code: str = "US",
+        max_results: int = 10,
+        youtube_client: Optional[Any] = None,
+        dry_run: bool = False
+    ) -> list[str]:
+        """Discovers real trending video topics on YouTube via videos.list(chart='mostPopular') (1 Data API unit).
+        
+        Rule 3 Compliance:
+        - Only consumes 1 Data API unit (vs 100 units for search.list).
+        - Supplies live on-platform trend signals directly into Ideator as inspiration.
+        """
+        category_map = {
+            "tech": "28",        # Science & Technology
+            "science": "28",     # Science & Technology
+            "education": "27",   # Education
+            "finance": "25",     # News & Politics / Business
+            "history": "27",     # Education
+            "psychology": "27",  # Education
+            "general": "24",     # Entertainment
+        }
+        cat_id = category_map.get(niche.lower().strip(), "28")
+
+        fallback_trends = {
+            "tech": [
+                "Quantum computing breaking cryptographic standards",
+                "Solid-state battery commercialization breakthroughs",
+                "Undersea fiber optic cable submersibles and sabotage detection",
+                "Next-generation nuclear fusion magnetic confinement coils",
+                "Autonomous humanoid robotics motor torque developments"
+            ],
+            "science": [
+                "Deep sea hydrothermal vent extremophiles discovery",
+                "James Webb space telescope gravitational lensing anomaly",
+                "CRISPR gene drive deployment in invasive species control",
+                "Superconducting materials at elevated pressures"
+            ],
+            "finance": [
+                "Global central bank digital currency settlement architecture",
+                "High-frequency algorithmic flash crash safeguards",
+                "Commodity port physical warehousing verification scandals"
+            ],
+            "history": [
+                "Self-healing Roman concrete maritime structural durability",
+                "LiDAR subterranean scans revealing ancient river networks",
+                "Decryption of charred Herculaneum papyrus scrolls via X-ray CT"
+            ],
+            "psychology": [
+                "Supermarket aisle behavioral architecture manipulation",
+                "Dopamine prediction error loops in short-form media",
+                "Choice architecture and default effect heuristics"
+            ]
+        }
+
+        if dry_run:
+            logger.info(f"[STRATEGIST_TRENDS] (DRY RUN) videos.list(chart='mostPopular') simulated (1 Data API unit).")
+            self.quota_tracker.consume(COST_VIDEOS_LIST, "videos.list(mostPopular) [dry_run]", f"chart:{niche}")
+            return fallback_trends.get(niche.lower().strip(), fallback_trends["tech"])[:max_results]
+
+        try:
+            # 1. Check Data API budget for videos.list (1 unit)
+            self.quota_tracker.check_and_reserve(COST_VIDEOS_LIST)
+
+            client = youtube_client or self.get_youtube_data_client()
+            req_params: dict[str, Any] = {
+                "part": "snippet",
+                "chart": "mostPopular",
+                "regionCode": region_code,
+                "maxResults": min(max_results, 25)
+            }
+            if cat_id:
+                req_params["videoCategoryId"] = cat_id
+
+            response = client.videos().list(**req_params).execute()
+
+            # 2. Consume 1 Data API unit
+            self.quota_tracker.consume(
+                units=COST_VIDEOS_LIST,
+                reason="videos.list(mostPopular)",
+                resource_id=f"chart:{niche}:{region_code}"
+            )
+
+            trend_titles = []
+            for item in response.get("items", []):
+                title = item.get("snippet", {}).get("title", "").strip()
+                if title:
+                    trend_titles.append(title)
+
+            if trend_titles:
+                logger.info(
+                    f"[STRATEGIST_TRENDS] Retrieved {len(trend_titles)} live trending topics from YouTube "
+                    f"(niche={niche}, category={cat_id}, 1 Data API unit spent)."
+                )
+                return trend_titles
+
+        except Exception as e:
+            logger.warning(
+                f"[STRATEGIST_TRENDS] videos.list(mostPopular) failed or unavailable ({e}). "
+                "Returning grounded fallback trend candidates."
+            )
+
+        return fallback_trends.get(niche.lower().strip(), fallback_trends["tech"])[:max_results]
+
     # =========================================================================
     # 2. RETENTION & CTR: youtubeAnalytics/v2 (INDEPENDENT POOL)
     # =========================================================================
@@ -393,27 +499,77 @@ class StrategistAgent:
     # 3. METADATA & SCHEDULING STRATEGY (BUDGET TIER: gemini-3.5-flash-lite)
     # =========================================================================
 
+    def _get_historical_channel_context(self) -> tuple[str, Optional[float]]:
+        """Retrieves historical channel performance to ground scheduling and benchmarks."""
+        try:
+            recent_vids = self.get_recent_videos(max_results=3, dry_run=False)
+            if recent_vids:
+                retentions = []
+                views_list = []
+                for v in recent_vids:
+                    an = self.get_video_analytics(v.video_id, dry_run=False)
+                    if an.views > 0:
+                        views_list.append(an.views)
+                    if an.average_view_percentage > 0:
+                        retentions.append(an.average_view_percentage)
+                if retentions:
+                    avg_ret = sum(retentions) / len(retentions)
+                    avg_views = sum(views_list) / len(views_list) if views_list else 0
+                    ctx_str = (
+                        f"HISTORICAL CHANNEL PERFORMANCE (from YouTube Analytics API v2):\n"
+                        f"- Average Retention across recent uploads: {avg_ret:.1f}%\n"
+                        f"- Average Views: {int(avg_views)}"
+                    )
+                    return ctx_str, avg_ret
+        except Exception as e:
+            logger.debug(f"[STRATEGIST] Live YouTube analytics unavailable: {e}")
+
+        # Local telemetry check
+        try:
+            from pipeline.dashboard.database import get_db_connection, get_db_path
+            with get_db_connection(get_db_path()) as conn:
+                rows = conn.execute(
+                    "SELECT duration_seconds FROM telemetry WHERE status='COMPLETED' ORDER BY id DESC LIMIT 5"
+                ).fetchall()
+                if rows:
+                    return f"HISTORICAL TELEMETRY: {len(rows)} studio-rendered videos on record.", None
+        except Exception:
+            pass
+
+        return "HISTORICAL CHANNEL PERFORMANCE: No historical analytics data available yet (new channel / cold start).", None
+
     def generate_scheduling_and_tags(
         self,
         topic: str,
         niche: str = "tech",
         target_audience: str = "general curiosity"
     ) -> dict[str, Any]:
-        """Generates optimal release timing, tags, and hashtag strategy.
+        """Generates optimal release timing and hashtag strategy grounded in channel context.
         
         Complies with Rule 14: Routed to gemini-3.5-flash-lite (AgentRole.STRATEGIST).
         """
+        hist_context, grounded_retention = self._get_historical_channel_context()
+
+        retention_instruction = (
+            f"Ground 'estimated_retention_benchmark' in the historical channel average ({grounded_retention:.1f}%).\n"
+            if grounded_retention is not None
+            else "Do not fabricate an ungrounded retention benchmark; set 'estimated_retention_benchmark' to null.\n"
+        )
+
         prompt = (
             f"You are a YouTube Shorts publishing strategist.\n"
             f"Topic: '{topic}'\n"
             f"Niche: '{niche}'\n"
             f"Target Audience: '{target_audience}'\n"
+            f"{hist_context}\n\n"
+            "STRATEGY INSTRUCTIONS:\n"
+            "- Consider the target audience's likely timezone and typical short-form consumption peak hours before converting your recommendation to best_publishing_hour_utc.\n"
+            f"- {retention_instruction}"
             "Return a JSON object with:\n"
             "1. 'best_publishing_hour_utc': integer (0 to 23)\n"
             "2. 'recommended_tags': list of 5-8 search tags\n"
             "3. 'primary_hashtags': list of 3 hashtags\n"
-            "4. 'estimated_retention_benchmark': expected percentage\n"
-            "5. 'pacing_recommendation': brief advice on hook urgency"
+            "4. 'estimated_retention_benchmark': float percentage or null if ungrounded"
         )
 
         try:
@@ -422,7 +578,6 @@ class StrategistAgent:
                 contents=prompt,
                 temperature=0.4
             )
-            # Clean markdown codeblocks if present
             cleaned = raw_text.strip()
             if cleaned.startswith("```json"):
                 cleaned = cleaned[7:]
@@ -437,8 +592,7 @@ class StrategistAgent:
                 "best_publishing_hour_utc": 15,  # 3 PM UTC
                 "recommended_tags": [f"{niche}", "shorts", "technology", "facts", "curiosity"],
                 "primary_hashtags": ["#shorts", f"#{niche}", "#viral"],
-                "estimated_retention_benchmark": 80.0,
-                "pacing_recommendation": "Hook must deliver visual reveal within first 2.5s."
+                "estimated_retention_benchmark": grounded_retention
             }
 
     def compute_optimal_schedule(
@@ -466,20 +620,25 @@ class StrategistAgent:
                 candidate += timedelta(days=1)
             target_iso = candidate.isoformat()
 
+        retention_raw = raw_meta.get("estimated_retention_benchmark")
+        retention_val: Optional[float] = None
+        if retention_raw is not None:
+            try:
+                if isinstance(retention_raw, str):
+                    retention_val = float(retention_raw.replace("%", "").strip())
+                else:
+                    retention_val = float(retention_raw)
+            except Exception:
+                retention_val = None
+
         summary_text = (
             f"Scheduled for {target_iso} (Hour {best_hour}:00 UTC). "
             f"Target tags: {', '.join(raw_meta.get('recommended_tags', [])[:4])}. "
-            f"Retention target: {raw_meta.get('estimated_retention_benchmark', 80.0)}%."
         )
-
-        retention_raw = raw_meta.get("estimated_retention_benchmark", 80.0)
-        try:
-            if isinstance(retention_raw, str):
-                retention_val = float(retention_raw.replace("%", "").strip())
-            else:
-                retention_val = float(retention_raw)
-        except Exception:
-            retention_val = 80.0
+        if retention_val is not None:
+            summary_text += f"Retention target: {retention_val:.1f}%."
+        else:
+            summary_text += "Retention target: baseline pending channel history."
 
         return OptimalSchedule(
             target_publish_datetime=target_iso,
@@ -487,7 +646,7 @@ class StrategistAgent:
             recommended_tags=raw_meta.get("recommended_tags", []),
             primary_hashtags=raw_meta.get("primary_hashtags", []),
             estimated_retention_benchmark=retention_val,
-            pacing_recommendation=raw_meta.get("pacing_recommendation", ""),
+            pacing_recommendation="",
             summary=summary_text
         )
 

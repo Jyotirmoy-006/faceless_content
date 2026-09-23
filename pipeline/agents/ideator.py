@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -129,7 +130,8 @@ class IdeatorAgent:
         custom_topic: Optional[str] = None,
         max_retries: int = 2,
         dry_run: bool = False,
-        excluded_topics: Optional[list[str]] = None
+        excluded_topics: Optional[list[str]] = None,
+        trend_candidates: Optional[list[str]] = None
     ) -> IdeaConcept:
         """Generates a structured video concept for short-form video production.
         
@@ -139,6 +141,7 @@ class IdeatorAgent:
             max_retries: Maximum LLM re-prompt attempts on validation error.
             dry_run: If True, uses fallback template without calling Gemini API.
             excluded_topics: Optional list of recent topics to exclude for SEO deduplication.
+            trend_candidates: Optional list of trending candidates to guide ideation.
             
         Returns:
             Validated IdeaConcept Pydantic model.
@@ -155,10 +158,19 @@ class IdeatorAgent:
         if excluded_topics is None:
             try:
                 from pipeline.dashboard.database import get_recent_topics
-                excluded_topics = get_recent_topics(niche=clean_niche, limit=30)
+                excluded_topics = get_recent_topics(niche=clean_niche, limit=200)
             except Exception as ex:
                 logger.debug(f"[ideator] Could not load recent topics from database: {ex}")
                 excluded_topics = []
+
+        # 1. Fetch live YouTube trend candidates for inspiration (Rule 3: 1 Data API unit)
+        if trend_candidates is None:
+            try:
+                from pipeline.agents.strategist import strategist
+                trend_candidates = strategist.get_trending_topics(niche=clean_niche, dry_run=dry_run)
+            except Exception as ex:
+                logger.debug(f"[ideator] Could not load live trend signals: {ex}")
+                trend_candidates = []
 
         client = self._client
         model_name = llm_manager.resolve_model(AgentRole.COPYWRITER)
@@ -174,14 +186,26 @@ class IdeatorAgent:
             return self._get_fallback_idea(clean_niche, excluded_topics)
 
         prompt = (
-            f"You are a viral YouTube Shorts and Instagram Reels concept strategist. "
+            f"You are a viral YouTube Shorts concept strategist. "
             f"Generate a single, highly engaging, click-worthy video concept in the '{clean_niche}' niche. "
             f"The angle must create curiosity and deliver an astonishing fact or perspective. "
-            f"Target duration should be 30 seconds."
+            f"Prioritize claims that are verifiably true or clearly framed as opinion/perspective — do not fabricate statistics or overstate certainty. "
+            f"Target duration should be 30 to 45 seconds.\n\n"
+            f"CRITICAL VISUAL TRACTABILITY REQUIREMENT:\n"
+            f"Every core idea in your concept MUST be capable of concrete, physical visual representation. "
+            f"DO NOT generate concepts centered on abstract source code, coding syntax, intangible software architectures, or abstract formulas without physical anchors. "
+            f"The concept MUST feature tangible physical anchors (e.g., massive server racks, glowing fiber optic cables under the ocean, robotic hardware, silicon wafer lithography, deep-sea submersibles, mega-structures) that allow the video generator to depict real objects, physical mechanisms, and real-world scale comparisons."
         )
 
+        if trend_candidates:
+            trends_list = "\n".join(f"- {t}" for t in trend_candidates[:5])
+            prompt += (
+                f"\n\nLIVE TREND INSPIRATION (Use these current on-platform signals for inspiration; craft an original angle):\n"
+                f"{trends_list}"
+            )
+
         if excluded_topics:
-            exclusion_list = "\n".join(f"- {t}" for t in excluded_topics[:25])
+            exclusion_list = "\n".join(f"- {t}" for t in excluded_topics[:40])
             prompt += (
                 f"\n\nCRITICAL DEDUPLICATION REQUIREMENT:\n"
                 f"You MUST NOT generate any topic on or substantially similar to these previously published topics:\n"
@@ -209,10 +233,9 @@ class IdeatorAgent:
                 idea = IdeaConcept.model_validate(parsed)
 
                 if excluded_topics:
-                    lower_topic = idea.topic.strip().lower()
-                    if any(lower_topic == ex.strip().lower() for ex in excluded_topics):
-                        logger.warning(f"Generated topic '{idea.topic}' duplicates an existing topic. Retrying...")
-                        prompt += f"\n\nRejection: Topic '{idea.topic}' was already used. Produce an entirely different concept."
+                    if self._is_duplicate_topic(idea.topic, excluded_topics):
+                        logger.warning(f"Generated topic '{idea.topic}' duplicates an existing topic in channel history. Retrying...")
+                        prompt += f"\n\nRejection: Topic '{idea.topic}' is too similar to past channel content. Produce an entirely different concept."
                         continue
 
                 logger.info(f"Concept validated successfully: '{idea.topic}'")
@@ -235,13 +258,28 @@ class IdeatorAgent:
         """Selects a curated fallback idea for the specified niche, filtering out duplicates."""
         catalog = FALLBACK_IDEAS.get(niche) or FALLBACK_IDEAS.get("tech", [])
         if excluded_topics:
-            ex_set = {t.strip().lower() for t in excluded_topics}
-            available = [item for item in catalog if item["topic"].strip().lower() not in ex_set]
+            available = [item for item in catalog if not self._is_duplicate_topic(item["topic"], excluded_topics)]
             if available:
                 chosen = random.choice(available)
                 return IdeaConcept.model_validate(chosen)
         chosen = random.choice(catalog)
         return IdeaConcept.model_validate(chosen)
+
+    def _is_duplicate_topic(self, candidate: str, existing_list: list[str]) -> bool:
+        """Determines if candidate topic matches or substantially overlaps with past topics."""
+        cand_clean = re.sub(r"[^a-z0-9 ]", "", candidate.lower()).strip()
+        stop = {"why", "how", "the", "what", "will", "is", "are", "and", "in", "of", "to", "a", "an"}
+        cand_words = set(cand_clean.split()) - stop
+        for ex in existing_list:
+            ex_clean = re.sub(r"[^a-z0-9 ]", "", ex.lower()).strip()
+            if cand_clean == ex_clean:
+                return True
+            ex_words = set(ex_clean.split()) - stop
+            if cand_words and ex_words:
+                jaccard = len(cand_words & ex_words) / float(len(cand_words | ex_words))
+                if jaccard >= 0.65:
+                    return True
+        return False
 
 
 # Global default instance

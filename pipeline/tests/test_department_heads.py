@@ -77,7 +77,7 @@ class TestDepartmentHeads(TestCase):
                 ScriptSegment(
                     segment_index=1,
                     narration="Nothing escapes an event horizon.",
-                    duration_seconds=30.0,
+                    duration_seconds=10.0,
                     visual_query="black hole accretion disk",
                     visual_shots=["black hole accretion disk", "space warping"]
                 )
@@ -96,7 +96,7 @@ class TestDepartmentHeads(TestCase):
                 ScriptSegment(
                     segment_index=1,
                     narration="Speed is essential.",
-                    duration_seconds=30.0,
+                    duration_seconds=10.0,
                     visual_query="running stopwatch",
                     visual_shots=["running stopwatch", "ticking clock"]
                 )
@@ -106,21 +106,48 @@ class TestDepartmentHeads(TestCase):
         self.assertFalse(res_verbose.passed)
         self.assertIn("Hook too verbose", res_verbose.feedback or "")
 
-        # Valid high-retention script
+        # Valid high-retention script with escalating narrative progression
         good_segments = [
             ScriptSegment(
-                segment_index=i + 1,
-                narration=f"Scene {i+1} rapid fact about quantum mechanics.",
-                duration_seconds=3.0,
-                visual_query="quantum particle entanglement",
-                visual_shots=["quantum particle entanglement"]
-            )
-            for i in range(12)
+                segment_index=1,
+                narration="Right now, Shor's algorithm on a 100,000 qubit system can crack RSA-2048 encryption in hours.",
+                duration_seconds=6.0,
+                visual_query="superconducting quantum processor glowing",
+                visual_shots=["superconducting quantum processor glowing", "silicon chip macro"]
+            ),
+            ScriptSegment(
+                segment_index=2,
+                narration="Every financial system, medical record, and government database on earth is suddenly defenseless.",
+                duration_seconds=6.0,
+                visual_query="digital banking vault red alert breach",
+                visual_shots=["digital banking vault red alert breach", "cyber security warning"]
+            ),
+            ScriptSegment(
+                segment_index=3,
+                narration="Attackers are already harvesting encrypted internet traffic today to decrypt it the second quantum arrives.",
+                duration_seconds=6.0,
+                visual_query="dark web server racks glowing",
+                visual_shots=["dark web server racks glowing", "data theft cables"]
+            ),
+            ScriptSegment(
+                segment_index=4,
+                narration="Engineers are racing into post-quantum lattice cryptography to shield global infrastructure before zero day.",
+                duration_seconds=6.0,
+                visual_query="lattice cryptography code matrix green",
+                visual_shots=["lattice cryptography code matrix green", "secure network grid"]
+            ),
+            ScriptSegment(
+                segment_index=5,
+                narration="Upgrade your enterprise keys to lattice standards now before your private data belongs to everyone.",
+                duration_seconds=6.0,
+                visual_query="cyber defense shield active",
+                visual_shots=["cyber defense shield active", "secure quantum shield"]
+            ),
         ]
         valid_script = Script(
             topic="Quantum Supremacy Breakthrough",
-            target_duration=36,
-            hook="Quantum computers just broke encryption.",
+            target_duration=30,
+            hook="Quantum computers just broke all modern encryption.",
             segments=good_segments
         )
         res_valid = head_of_story.inspect(valid_script)
@@ -286,3 +313,14 @@ class TestDepartmentHeads(TestCase):
             }
         )
         self.assertTrue(res_valid.passed)
+
+        # Valid metadata with YouTube quota check (skip_publish=False)
+        res_quota = head_of_compliance.inspect_tier1(
+            fake_video,
+            context={
+                "title": "Quantum Computing Secrets Revealed",
+                "description": "Full narration breakdown #shorts #tech",
+                "skip_publish": False
+            }
+        )
+        self.assertTrue(res_quota.passed)

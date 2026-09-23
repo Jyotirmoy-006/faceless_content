@@ -4,7 +4,7 @@ Complies with:
 - Rule 2 (NO SILENT CRASHES): Bounded retries and fallback to local Piper TTS.
 - Rule 5 (edge-tts IS UNOFFICIAL): Resilient sentence/clause chunking, exponential backoff, Piper fallback.
 - Rule 11 (AUDIO MUST SOUND CONTINUOUS): Expressive pacing, deliberate punctuation pauses,
-  and EBU R128 (-14.0 LUFS / -1.5 dBTP) normalization.
+  and EBU R128 (-16.0 LUFS / -1.5 dBTP) dialogue normalization.
 """
 
 from __future__ import annotations
@@ -24,12 +24,7 @@ from pydub import AudioSegment, effects
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
-
-from pipeline.core.audio_processor import (
-    convert_to_wav48k,
-    normalize_loudness_ebu_r128,
-    strip_silence,
-)
+from pipeline.core.audio_processor import convert_to_wav48k, normalize_loudness_ebu_r128, strip_silence
 
 DEFAULT_PIPER_MODEL = ROOT_DIR / "pipeline" / "models" / "piper" / "en_US-lessac-low.onnx"
 DEFAULT_PIPER_CONFIG = ROOT_DIR / "pipeline" / "models" / "piper" / "en_US-lessac-low.onnx.json"
@@ -42,31 +37,33 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 # High-retention narrative-driven voices
-DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"
+DEFAULT_VOICE = "af_bella*0.6+bf_isabella*0.4"
+DEFAULT_EDGE_VOICE = "en-US-AndrewMultilingualNeural"
 FALLBACK_VOICE = "en-US-BrianMultilingualNeural"
 
 
 def generate_ssml(
     text: str,
     is_hook: bool = False,
-    voice: str = DEFAULT_VOICE
+    voice: str = DEFAULT_EDGE_VOICE,
+    rate_override: Optional[str] = None
 ) -> str:
     """Wraps text in dynamic SSML with prosody control and punctuation break tags.
 
-    - Hooks inject urgency: rate="+8%", pitch="-2Hz".
-    - Standard narration: rate="+4%", pitch="+0Hz".
-    - Commas, semicolons, em-dashes: <break time="180ms"/>
-    - Full stops, exclamation marks, question marks: <break time="320ms"/>
+    - Hooks inject urgency: rate="+16%", pitch="-2Hz".
+    - Standard narration: rate="+12%", pitch="+0Hz".
+    - Commas, semicolons, em-dashes: <break time="120ms"/>
+    - Full stops, exclamation marks, question marks: <break time="200ms"/>
     """
     cleaned_text = re.sub(r'\s+', ' ', text.strip())
-    rate = "+8%" if is_hook else "+4%"
+    rate = rate_override if rate_override else ("+16%" if is_hook else "+12%")
     pitch = "-2Hz" if is_hook else "+0Hz"
 
     # Insert deliberate break tags after punctuation boundaries
-    # Commas, semicolons, em-dashes
-    formatted = re.sub(r'([,;—\-])\s*', r'\1 <break time="180ms"/> ', cleaned_text)
-    # Sentence boundaries (. ! ?)
-    formatted = re.sub(r'([.!?])\s*', r'\1 <break time="320ms"/> ', formatted)
+    # Commas, semicolons, em-dashes, or spaced hyphens (do not split intra-word hyphens like lithium-ion)
+    formatted = re.sub(r'([,;—]|\s+-\s+)\s*', r'\1 <break time="120ms"/> ', cleaned_text)
+    # Sentence boundaries (. ! ?) including end of string
+    formatted = re.sub(r'([.!?])(?:\s+|$)', r'\1 <break time="200ms"/> ', formatted)
     formatted = re.sub(r'\s+', ' ', formatted).strip()
 
     ssml = (
@@ -89,7 +86,7 @@ def parse_ssml_tokens(ssml_or_text: str) -> Tuple[List[Tuple[str, int]], str, st
         A list of (phrase_text, pause_after_ms), and the prosody rate/pitch parameters.
     """
     # Extract prosody attributes if present
-    rate = "+4%"
+    rate = "+12%"
     pitch = "+0Hz"
     rate_match = re.search(r'rate="([^"]+)"', ssml_or_text)
     if rate_match:
@@ -200,15 +197,17 @@ def synthesize_segment(
     temp_dir: Optional[Path] = None,
     mock_edge_failure: bool = False,
     target_lufs: float = -14.0,
-    target_tp: float = -1.5
+    target_tp: float = -1.5,
+    rate_override: Optional[str] = None
 ) -> Tuple[Path, str, float, float]:
     """Main VoiceActor synthesis pipeline for a script segment.
 
-    1. Formats text with dynamic SSML (<prosody rate/pitch> and <break time="..."/>).
-    2. Synthesizes phrases through Edge-TTS (with fallback to Piper).
-    3. Injects precise audio silence buffers (180ms for commas/em-dashes, 320ms for sentences).
-    4. Applies true-peak limiting at -1.5 dBFS via pydub.effects.normalize.
-    5. Normalizes to EBU R128 (-14.0 LUFS) at 48kHz mono WAV.
+    1. Checks if Kokoro neural voice is requested (CPU-only execution).
+    2. Otherwise, formats text with dynamic SSML (<prosody rate/pitch> and <break time="..."/>).
+    3. Synthesizes phrases through Edge-TTS (with fallback to Piper).
+    4. Injects precise audio silence buffers (180ms for commas/em-dashes, 320ms for sentences).
+    5. Applies true-peak limiting at -1.5 dBFS via pydub.effects.normalize.
+    6. Normalizes to EBU R128 (-14.0 LUFS standard target) at 48kHz mono WAV.
 
     Returns:
         Tuple[Path, str, float, float]:
@@ -218,8 +217,41 @@ def synthesize_segment(
     t_dir = Path(temp_dir) if temp_dir else output_path.parent / f"va_temp_{abs(hash(text)) % 100000}"
     t_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Generate standard SSML
-    ssml_text = generate_ssml(text, is_hook=is_hook, voice=voice)
+    # 0. Kokoro Voice Dispatch (CPU-only neural synthesis)
+    if (
+        voice.startswith(("af_", "am_", "bf_", "bm_", "fusion:", "blend:"))
+        or ("*" in voice and "+" in voice)
+    ) and not mock_edge_failure:
+        try:
+            from pipeline.workers.kokoro_worker import synthesize_kokoro_speech
+            speed = 1.18 if is_hook else 1.15
+            if rate_override:
+                # Approximate rate override string e.g. "+16%" -> multiplier
+                speed_match = re.search(r'\+?(\d+)%', rate_override)
+                if speed_match:
+                    speed = 1.0 + float(speed_match.group(1)) / 100.0
+
+            clean_wav = synthesize_kokoro_speech(
+                text=text,
+                output_path=output_path,
+                voice=voice,
+                speed=speed,
+                target_lufs=target_lufs,
+                target_tp=target_tp
+            )
+            seg_audio = AudioSegment.from_file(str(clean_wav))
+            speech_duration = len(seg_audio) / 1000.0
+            trailing_pause_s = 0.20
+            logger.info(
+                f"[VOICE_ACTOR] Audio ready (kokoro-cpu, voice={voice}): dur={speech_duration:.2f}s, target_lufs={target_lufs}"
+            )
+            return clean_wav, "kokoro-cpu", speech_duration, trailing_pause_s
+        except Exception as kokoro_err:
+            logger.warning(f"[VOICE_ACTOR] Kokoro synthesis failed ({kokoro_err}). Falling back to standard pipeline.")
+
+    # 1. Generate standard SSML (use DEFAULT_EDGE_VOICE if voice is a Kokoro blend)
+    edge_voice = voice if ("en-" in voice or "zh-" in voice or "ja-" in voice or "ko-" in voice) else DEFAULT_EDGE_VOICE
+    ssml_text = generate_ssml(text, is_hook=is_hook, voice=edge_voice, rate_override=rate_override)
     logger.debug(f"[VOICE_ACTOR] Generated SSML: {ssml_text}")
 
     # 2. Parse phrases and break intervals
@@ -229,7 +261,18 @@ def synthesize_segment(
 
     if not mock_edge_failure:
         try:
-            for idx, (phrase, pause_ms) in enumerate(phrases_with_breaks):
+            # Group sub-phrases into full sentences so Edge-TTS preserves natural prosody & comma cadence
+            sentence_chunks: List[Tuple[str, int]] = []
+            cur_words: List[str] = []
+            for p_text, p_pause in phrases_with_breaks:
+                cur_words.append(p_text)
+                if p_pause >= 300:
+                    sentence_chunks.append((" ".join(cur_words), p_pause))
+                    cur_words = []
+            if cur_words:
+                sentence_chunks.append((" ".join(cur_words), 320))
+
+            for idx, (phrase, pause_ms) in enumerate(sentence_chunks):
                 chunk_file = t_dir / f"chunk_{idx}.mp3"
                 synthesize_phrase_edgetts(
                     phrase=phrase,
@@ -239,10 +282,18 @@ def synthesize_segment(
                     output_path=chunk_file
                 )
                 seg_audio = AudioSegment.from_file(str(chunk_file))
+
+                # Strip edge-tts frame silence padding with 20ms margin to preserve natural consonants
+                from pydub.silence import detect_leading_silence
+                lead = detect_leading_silence(seg_audio, silence_threshold=-42.0)
+                tail = detect_leading_silence(seg_audio.reverse(), silence_threshold=-42.0)
+                s_trim = max(0, lead - 20)
+                e_trim = max(s_trim + 50, len(seg_audio) - max(0, tail - 20))
+                seg_audio = seg_audio[s_trim:e_trim]
+
                 combined_audio += seg_audio
 
-                # Inject deliberate SSML punctuation break
-                if pause_ms > 0:
+                if pause_ms > 0 and idx < len(sentence_chunks) - 1:
                     combined_audio += AudioSegment.silent(duration=pause_ms)
 
         except Exception as err:
@@ -253,34 +304,27 @@ def synthesize_segment(
         combined_audio = None
         engine_used = "piper-fallback"
 
-    # Fallback to local Piper TTS
+    # Fallback to local Piper TTS if needed
     if combined_audio is None or len(combined_audio) < 100:
         piper_wav = t_dir / "piper_raw.wav"
         synthesize_piper_fallback(text, piper_wav, length_scale=0.85 if is_hook else 0.90)
         combined_audio = AudioSegment.from_file(str(piper_wav))
         engine_used = "piper-fallback"
 
-    # 3. Peak normalization with -1.5 dBFS true-peak headroom via pydub
     pre_norm_wav = t_dir / "pre_norm.wav"
     peak_normalized = effects.normalize(combined_audio, headroom=abs(target_tp))
     peak_normalized.export(str(pre_norm_wav), format="wav")
 
-    # 4. Standardize to 48kHz mono
     wav_48k = t_dir / "wav_48k.wav"
     convert_to_wav48k(pre_norm_wav, wav_48k)
 
-    # 5. Two-pass EBU R128 loudness normalization (-14.0 LUFS)
     norm_wav = t_dir / "ebu_norm.wav"
     final_wav, stats = normalize_loudness_ebu_r128(
-        input_path=wav_48k,
-        output_path=output_path,
-        target_lufs=target_lufs,
-        target_tp=target_tp
+        input_path=wav_48k, output_path=output_path, target_lufs=target_lufs, target_tp=target_tp
     )
 
-    # 6. Measure clean duration and trailing pause
     speech_duration = len(peak_normalized) / 1000.0
-    trailing_pause_ms = phrases_with_breaks[-1][1] if phrases_with_breaks else 320
+    trailing_pause_ms = phrases_with_breaks[-1][1] if (phrases_with_breaks and phrases_with_breaks[-1][1] > 0) else 200
     trailing_pause_s = trailing_pause_ms / 1000.0
 
     logger.info(

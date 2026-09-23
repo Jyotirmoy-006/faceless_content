@@ -1,17 +1,21 @@
 """Final video assembler subprocess worker with Instagram-compliant NVENC encoding.
 
 Per Rule 1 (GPU MEMORY):
-- Subprocess isolation: runs independently and releases all MoviePy/FFmpeg NVENC
+- Subprocess isolation: runs independently and releases all FFmpeg NVENC
   resources upon process exit.
 
-INSTAGRAM COMPLIANCE SPECIFICATION:
------------------------------------
-- Video Codec: h264_nvenc (NVIDIA hardware acceleration)
+INSTAGRAM & BROADCAST COMPLIANCE SPECIFICATION:
+----------------------------------------------
+- Video Codec: h264_nvenc (NVIDIA hardware acceleration) with libx264 fallback
 - Pixel Format: yuv420p (required for broad mobile/browser playback)
+- Color Space: bt709 / bt709 / bt709 (Rule 9: HD / Vertical video standard)
+- Dynamic Range: tv (standard broadcast 16-235)
 - Closed-GOP: -g 48 -keyint_min 48 -sc_threshold 0 (fixed keyframe interval at 30 fps)
 - Audio Codec: AAC at 48kHz sampling rate and 128 kbps bitrate
 - Moov Atom: -movflags +faststart (places moov before mdat for instant streaming)
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -24,28 +28,6 @@ from typing import List, Optional
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
-
-from moviepy import AudioFileClip, VideoFileClip
-from pipeline.workers.normalize_worker import normalize_clip
-
-# Intercept Popen to capture and display the exact FFmpeg command line
-_original_popen = subprocess.Popen
-_executed_ffmpeg_commands: List[List[str]] = []
-
-
-class _LoggedPopen(_original_popen):
-    def __init__(self, cmd, *args, **kwargs):
-        if isinstance(cmd, (list, tuple)) and any("ffmpeg" in str(arg).lower() for arg in cmd):
-            _executed_ffmpeg_commands.append([str(c) for c in cmd])
-            cmd_str = " ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd)
-            print("\n" + "=" * 70, flush=True)
-            print("[RENDER_WORKER] EXACT FFmpeg COMMAND EXECUTED:", flush=True)
-            print(cmd_str, flush=True)
-            print("=" * 70 + "\n", flush=True)
-        super().__init__(cmd, *args, **kwargs)
-
-
-subprocess.Popen = _LoggedPopen
 
 
 def check_nvenc_available() -> bool:
@@ -75,7 +57,7 @@ def build_ffmpeg_cmd(
     else:
         cmd.extend(["-map", "0:v:0", "-map", "0:a?"])
 
-    filter_complex = []
+    filter_complex: List[str] = []
     if ass_path and Path(ass_path).exists():
         from pipeline.core.caption_styler import escape_ffmpeg_path
         escaped_ass = escape_ffmpeg_path(Path(ass_path))
@@ -93,9 +75,10 @@ def build_ffmpeg_cmd(
         "-colorspace", "bt709",
         "-color_primaries", "bt709",
         "-color_trc", "bt709",
-        "-movflags", "+faststart",
+        "-c:a", "aac",
         "-b:a", "128k",
-        "-ar", "48000"
+        "-ar", "48000",
+        "-movflags", "+faststart"
     ])
 
     if use_nvenc:
@@ -129,47 +112,12 @@ def render_video(
     fps: int = 30,
     bitrate: str = "4000k"
 ) -> Path:
-    """Renders the final video with explicit Instagram-compliant parameters."""
+    """Renders the final video with explicit Instagram-compliant parameters via direct FFmpeg."""
+    output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     start_time = time.time()
 
-    print(f"[RENDER_WORKER] Loading video: {video_path}")
-    video = VideoFileClip(str(video_path))
-
-    audio = None
-    if audio_path and audio_path.exists():
-        print(f"[RENDER_WORKER] Loading audio: {audio_path}")
-        audio = AudioFileClip(str(audio_path))
-        # Align duration: if audio is shorter or longer, match video duration to audio
-        target_duration = audio.duration
-        if video.duration < target_duration:
-            # Loop video to match audio duration
-            num_loops = int(target_duration // video.duration) + 1
-            print(f"[RENDER_WORKER] Looping video {num_loops}x to match audio duration ({target_duration:.2f}s)...")
-            from moviepy import concatenate_videoclips
-            video = concatenate_videoclips([video] * num_loops, method="compose").subclipped(0, target_duration)
-        else:
-            video = video.subclipped(0, target_duration)
-        video = video.with_audio(audio)
-    else:
-        print("[RENDER_WORKER] No separate audio provided; using existing video audio if present.")
-
-    # Explicit Instagram-compliant FFmpeg parameters (Rule 9: bt709/tv range)
-    ffmpeg_params = [
-        "-g", "48",                  # Closed GOP size (48 frames = 1.6s at 30 fps)
-        "-keyint_min", "48",         # Minimum keyframe interval
-        "-sc_threshold", "0",        # Disable scene-change keyframes for constant GOP
-        "-pix_fmt", "yuv420p",       # Standard 4:2:0 chroma subsampling
-        "-color_range", "tv",        # Standard broadcast dynamic range
-        "-colorspace", "bt709",      # Standard HD/Vertical color space
-        "-color_primaries", "bt709", # Standard color primaries
-        "-color_trc", "bt709",       # Standard transfer characteristics
-        "-movflags", "+faststart",   # Move moov atom to beginning of file
-        "-b:a", "128k",              # Target audio bitrate
-        "-ar", "48000"               # Target audio sample rate
-    ]
-
-    # Rule 10: Hard-burn captions directly into video frame pixels
+    ass_path = None
     if srt_path and Path(srt_path).exists():
         srt_p = Path(srt_path).resolve()
         ass_p = srt_p.with_suffix(".ass")
@@ -177,58 +125,43 @@ def render_video(
             from pipeline.core.caption_styler import srt_to_styled_ass
             print(f"[RENDER_WORKER] Converting {srt_p.name} to styled 1080x1920 ASS format...")
             ass_p = srt_to_styled_ass(srt_p, ass_p)
+        ass_path = ass_p
 
-        from pipeline.core.caption_styler import escape_ffmpeg_path
-        escaped_ass = escape_ffmpeg_path(ass_p)
-        print(f"[RENDER_WORKER] Hard-burning styled captions directly into video frame: {ass_p.name}")
-        ffmpeg_params.extend(["-vf", f"ass='{escaped_ass}'"])
-    else:
-        print("[RENDER_WORKER] No subtitles file provided; rendering clean video without burned captions.")
-
-    print("[RENDER_WORKER] Starting h264_nvenc hardware-accelerated render (preset: p4, rc: vbr, cq: 23)...")
-    nvenc_params = list(ffmpeg_params) + ["-rc", "vbr", "-cq", "23"]
-    try:
+    # Extract audio duration to ensure exact stream alignment
+    audio_dur = None
+    if audio_path and Path(audio_path).exists():
         try:
-            video.write_videofile(
-                str(output_path),
-                fps=fps,
-                codec="h264_nvenc",
-                audio_codec="aac",
-                audio_fps=48000,
-                audio_bitrate="128k",
-                preset="p4",
-                bitrate=bitrate,
-                ffmpeg_params=nvenc_params,
-                logger="bar"
-            )
-        except Exception as nvenc_err:
-            print(f"[RENDER_WORKER] h264_nvenc failed ({nvenc_err}). Falling back to libx264 (crf 20)...")
-            libx264_params = list(ffmpeg_params) + ["-crf", "20"]
-            video.write_videofile(
-                str(output_path),
-                fps=fps,
-                codec="libx264",
-                audio_codec="aac",
-                audio_fps=48000,
-                audio_bitrate="128k",
-                preset="veryfast",
-                bitrate=bitrate,
-                ffmpeg_params=libx264_params,
-                logger="bar"
-            )
-    finally:
-        # Explicitly close and release clip resources under all execution paths
-        try:
-            if video.audio:
-                video.audio.close()
-            video.close()
+            import wave
+            with wave.open(str(audio_path), "r") as wf:
+                audio_dur = wf.getnframes() / float(wf.getframerate())
         except Exception:
             pass
-        if audio:
-            try:
-                audio.close()
-            except Exception:
-                pass
+
+    cmd = build_ffmpeg_cmd(
+        video_path=video_path,
+        audio_path=audio_path,
+        output_path=output_path,
+        ass_path=ass_path,
+        audio_duration=audio_dur,
+        fps=fps,
+        bitrate=bitrate
+    )
+
+    print("\n" + "=" * 70, flush=True)
+    print("[RENDER_WORKER] EXACT FFmpeg COMMAND EXECUTED:", flush=True)
+    print(" ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd), flush=True)
+    print("=" * 70 + "\n", flush=True)
+
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        if "h264_nvenc" in cmd:
+            print(f"[RENDER_WORKER] h264_nvenc failed ({res.stderr[:200]}). Retrying with libx264...")
+            cmd_fallback = [c if c != "h264_nvenc" else "libx264" for c in cmd]
+            res = subprocess.run(cmd_fallback, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg render failed: {res.stderr}")
+        else:
+            raise RuntimeError(f"FFmpeg render failed: {res.stderr}")
 
     elapsed = time.time() - start_time
     print(f"[RENDER_WORKER] Render completed in {elapsed:.2f}s -> {output_path}")

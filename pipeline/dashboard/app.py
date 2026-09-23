@@ -127,7 +127,12 @@ def find_latest_video(after_timestamp: float) -> Optional[Path]:
     if not OUTPUT_DIR.exists():
         return None
     videos = sorted(
-        [p for p in OUTPUT_DIR.glob("*.mp4") if not p.name.endswith("_original_unfixed.mp4")],
+        [
+            p for p in OUTPUT_DIR.glob("*.mp4")
+            if not p.name.endswith("_original_unfixed.mp4")
+            and not p.name.endswith("_qa_proxy.mp4")
+            and "_proxy" not in p.name
+        ],
         key=lambda p: p.stat().st_mtime,
         reverse=True
     )
@@ -218,6 +223,10 @@ def queue_worker_step():
 
     # 6. Ensure logs directory exists and write initiation header
     LOG_FILE_SUB.parent.mkdir(parents=True, exist_ok=True)
+    jobs_log_dir = ROOT_DIR / "pipeline" / "logs" / "jobs"
+    jobs_log_dir.mkdir(parents=True, exist_ok=True)
+    job_log_file = jobs_log_dir / f"job_{job_id}.log"
+
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header = (
         f"\n{'='*70}\n"
@@ -230,12 +239,15 @@ def queue_worker_step():
             f.write(header)
         with open(LOG_FILE_ROOT, "a", encoding="utf-8") as f:
             f.write(header)
+        with open(job_log_file, "a", encoding="utf-8") as f:
+            f.write(header)
     except Exception:
         pass
 
     start_ts = time.time()
     log_fp_sub = None
     log_fp_root = None
+    log_fp_job = None
     proc = None
     extracted_script_json = script_json
     extracted_youtube_url = None
@@ -247,6 +259,10 @@ def queue_worker_step():
             log_fp_root = open(LOG_FILE_ROOT, "a", encoding="utf-8", buffering=1)
         except Exception:
             log_fp_root = None
+        try:
+            log_fp_job = open(job_log_file, "a", encoding="utf-8", buffering=1)
+        except Exception:
+            log_fp_job = None
 
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         proc = subprocess.Popen(
@@ -277,6 +293,9 @@ def queue_worker_step():
             if log_fp_root:
                 log_fp_root.write(line)
                 log_fp_root.flush()
+            if log_fp_job:
+                log_fp_job.write(line)
+                log_fp_job.flush()
 
             clean_line = line.strip()
 
@@ -289,6 +308,11 @@ def queue_worker_step():
                 update_job_stage(job_id, "AUDIO_TTS")
             elif "[STAGE:RENDER]" in clean_line or ">>> [STAGE 3]" in clean_line:
                 update_job_stage(job_id, "RENDER")
+            elif "[STAGE:COMPLIANCE]" in clean_line or ">>> [STAGE 3.5]" in clean_line:
+                update_job_stage(job_id, "COMPLIANCE")
+            elif "[STAGE:COMPLIANCE_HELD]" in clean_line:
+                is_pending_review = True
+                update_job_stage(job_id, "COMPLIANCE_HELD")
             elif "[STAGE:PUBLISH]" in clean_line or ">>> [STAGE 4]" in clean_line:
                 update_job_stage(job_id, "PUBLISH")
             elif "[STAGE:PENDING_REVIEW]" in clean_line:
@@ -340,6 +364,15 @@ def queue_worker_step():
 
         latest_vid = find_latest_video(start_ts)
         vid_str = str(latest_vid) if latest_vid else None
+
+        if latest_vid and job_log_file.exists():
+            try:
+                videos_log_dir = ROOT_DIR / "pipeline" / "logs" / "videos"
+                videos_log_dir.mkdir(parents=True, exist_ok=True)
+                target_vlog = videos_log_dir / f"{latest_vid.stem}.log"
+                target_vlog.write_text(job_log_file.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+            except Exception as log_err:
+                logger.warning(f"[QUEUE_WORKER] Could not copy video log file: {log_err}")
 
         if exit_code == 10 or is_pending_review:
             logger.info(f"[QUEUE_WORKER] Job #{job_id} halted for human script review.")
@@ -419,6 +452,11 @@ def queue_worker_step():
         if log_fp_root:
             try:
                 log_fp_root.close()
+            except Exception:
+                pass
+        if log_fp_job:
+            try:
+                log_fp_job.close()
             except Exception:
                 pass
 
@@ -632,9 +670,17 @@ def get_system():
     except Exception:
         pass
 
+    llm_quota_info = {}
+    try:
+        from pipeline.core.llm_manager import model_quota_tracker
+        llm_quota_info = model_quota_tracker.get_status()
+    except Exception:
+        pass
+
     return jsonify({
         "status": "online",
         "quota": quota_info,
+        "llm_quota": llm_quota_info,
         "circuit_breaker": cb_info,
         "is_running": is_locked or (running_job is not None),
         "active_pid": lock_pid or (running_job.get("pid") if running_job else None),
@@ -644,6 +690,16 @@ def get_system():
         "gpu": {"free_vram_mb": free_vram},
         "timestamp": datetime.now(timezone.utc).isoformat()
     }), 200
+
+
+@app.route("/api/llm/quota", methods=["GET"])
+def get_llm_quota_endpoint():
+    """Returns real-time Gemini model daily quota tracking and exhaustion status."""
+    try:
+        from pipeline.core.llm_manager import model_quota_tracker
+        return jsonify(model_quota_tracker.get_status()), 200
+    except Exception as exc:
+        return jsonify({"error": f"Failed to retrieve LLM quota status: {exc}"}), 500
 
 
 @app.route("/api/status", methods=["GET"])
@@ -776,6 +832,89 @@ def download_video_simulation_endpoint(filename: str):
     out_filename = f"{stem}_agents_telemetry.json"
     response = Response(json_str, mimetype="application/json")
     response.headers["Content-Disposition"] = f'attachment; filename="{out_filename}"'
+    return response
+
+
+@app.route("/api/videos/<path:filename>/logs/download", methods=["GET"])
+def download_video_logs_endpoint(filename: str):
+    """Exports raw execution log file for a specific video as a downloadable text file."""
+    stem = Path(filename).stem
+    videos_log_dir = ROOT_DIR / "pipeline" / "logs" / "videos"
+    jobs_log_dir = ROOT_DIR / "pipeline" / "logs" / "jobs"
+    video_log_path = videos_log_dir / f"{stem}.log"
+
+    log_content = ""
+    if video_log_path.exists() and video_log_path.stat().st_size > 0:
+        log_content = video_log_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        trace_data = get_video_simulation_trace(filename)
+        job_id = trace_data.get("job_id")
+        if job_id:
+            job_log_path = jobs_log_dir / f"job_{job_id}.log"
+            if job_log_path.exists() and job_log_path.stat().st_size > 0:
+                log_content = job_log_path.read_text(encoding="utf-8", errors="replace")
+
+        if not log_content:
+            target = LOG_FILE_SUB if LOG_FILE_SUB.exists() else LOG_FILE_ROOT
+            if target.exists():
+                lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+                matched_slice = []
+                capturing = False
+                for line in lines:
+                    if stem in line or (trace_data.get("topic") and trace_data["topic"] in line):
+                        capturing = True
+                    if capturing:
+                        matched_slice.append(line)
+                        if len(matched_slice) > 800:
+                            break
+                if matched_slice:
+                    log_content = "\n".join(matched_slice)
+                else:
+                    log_content = "\n".join(lines[-500:])
+
+    if not log_content:
+        log_content = f"[SYSTEM] No log telemetry found for video: {Path(filename).name}\n"
+
+    out_name = f"{stem}_execution.log"
+    response = Response(log_content, mimetype="text/plain; charset=utf-8")
+    response.headers["Content-Disposition"] = f'attachment; filename="{out_name}"'
+    return response
+
+
+@app.route("/api/jobs/<job_id_param>/logs/download", methods=["GET"])
+def download_job_logs_endpoint(job_id_param: str):
+    """Exports raw execution log file for a job as a downloadable text file."""
+    jobs_log_dir = ROOT_DIR / "pipeline" / "logs" / "jobs"
+    job_log_path = jobs_log_dir / f"job_{job_id_param}.log"
+
+    log_content = ""
+    if job_log_path.exists() and job_log_path.stat().st_size > 0:
+        log_content = job_log_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        target = LOG_FILE_SUB if LOG_FILE_SUB.exists() else LOG_FILE_ROOT
+        if target.exists():
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+            matched_slice = []
+            capturing = False
+            start_marker = f"EXECUTING JOB #{job_id_param}"
+            for line in lines:
+                if start_marker in line:
+                    capturing = True
+                elif capturing and "EXECUTING JOB #" in line and start_marker not in line:
+                    break
+                if capturing:
+                    matched_slice.append(line)
+            if matched_slice:
+                log_content = "\n".join(matched_slice)
+            else:
+                log_content = "\n".join(lines[-500:])
+
+    if not log_content:
+        log_content = f"[SYSTEM] No log telemetry found for job #{job_id_param}\n"
+
+    out_name = f"job_{job_id_param}_execution.log"
+    response = Response(log_content, mimetype="text/plain; charset=utf-8")
+    response.headers["Content-Disposition"] = f'attachment; filename="{out_name}"'
     return response
 
 

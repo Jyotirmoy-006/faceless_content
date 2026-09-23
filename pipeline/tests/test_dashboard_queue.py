@@ -142,11 +142,13 @@ class TestDashboardQueue(unittest.TestCase):
         self.assertEqual(get_job(j3["id"])["status"], "QUEUED")
 
         # Cycle 2: Job 2 is picked up and runs to completion
+        time.sleep(0.15)
         queue_worker_step()
         self.assertEqual(get_job(j2["id"])["status"], "COMPLETED")
         self.assertEqual(get_job(j3["id"])["status"], "QUEUED")
 
         # Cycle 3: Job 3 is picked up and runs to completion
+        time.sleep(0.15)
         queue_worker_step()
         self.assertEqual(get_job(j3["id"])["status"], "COMPLETED")
 

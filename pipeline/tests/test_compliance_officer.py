@@ -48,12 +48,15 @@ class TestComplianceOfficer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp_dir = Path(tempfile.mkdtemp(prefix="compliance_test_"))
-        # Create a synthetic 1080x1920 30fps master video using FFmpeg
+        # Create a synthetic 1080x1920 30fps master video with audio using FFmpeg
         cls.master_video = cls.temp_dir / "master_test_video.mp4"
         cmd = [
             "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "testsrc=duration=2.0:size=1080x1920:rate=30",
+            "-f", "lavfi", "-i", "testsrc=duration=12.0:size=1080x1920:rate=30",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
             "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-shortest",
             str(cls.master_video)
         ]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -342,10 +345,14 @@ class TestComplianceOfficer(unittest.TestCase):
             ]
         )
         mock_ver_res = VerificationResult(passed=True, stage="COPYWRITER", tier=1)
+        test_cb_file = self.temp_dir / "orch_cb_low_state.json"
+        isolated_cb = CircuitBreaker(state_file=test_cb_file, max_failures=3)
 
         with patch("main.orchestrate_video", return_value=self.master_video), \
              patch("main.get_valid_script", return_value=dummy_script), \
-             patch("main.verify_copywriter", return_value=mock_ver_res), \
+             patch("main.head_of_story.enforce_gate", side_effect=lambda *a, initial_artifact=None, **kw: (initial_artifact if initial_artifact is not None else a[0], [mock_ver_res])), \
+             patch("main.circuit_breaker", isolated_cb), \
+             patch("pipeline.agents.compliance_officer.circuit_breaker", isolated_cb), \
              patch("main.record_run_telemetry") as mock_db:
             telemetry = run_pipeline(
                 topic_override="Advances in Solar Energy Technology",
@@ -389,7 +396,7 @@ class TestComplianceOfficer(unittest.TestCase):
 
         with patch("main.orchestrate_video", return_value=self.master_video), \
              patch("main.get_valid_script", return_value=dummy_script), \
-             patch("main.verify_copywriter", return_value=mock_ver_res), \
+             patch("main.head_of_story.enforce_gate", side_effect=lambda *a, initial_artifact=None, **kw: (initial_artifact if initial_artifact is not None else a[0], [mock_ver_res])), \
              patch("main.circuit_breaker", isolated_cb), \
              patch("pipeline.agents.compliance_officer.circuit_breaker", isolated_cb), \
              patch("pipeline.agents.compliance_officer.notifier", isolated_notifier), \

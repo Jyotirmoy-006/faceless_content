@@ -21,25 +21,25 @@ from pipeline.core.audio_processor import measure_loudness_ebu_r128
 
 
 def test_generate_ssml_hook():
-    """Validates that hooks inject urgency with rate="+8%" and pitch="-2Hz"."""
+    """Validates that hooks inject urgency with rate="+16%" and pitch="-2Hz"."""
     hook_text = "Stop scrolling! This hidden secret will shock you."
     ssml = generate_ssml(hook_text, is_hook=True, voice=DEFAULT_VOICE)
 
-    assert 'rate="+8%"' in ssml
+    assert 'rate="+16%"' in ssml
     assert 'pitch="-2Hz"' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
-    assert '<break time="320ms"/>' in ssml
+    assert '<break time="200ms"/>' in ssml
 
 
 def test_generate_ssml_punctuation_breaks():
-    """Validates that commas/dashes inject 180ms breaks and sentences inject 320ms breaks."""
+    """Validates that commas/dashes inject 120ms breaks and sentences inject 200ms breaks."""
     text = "Wait, listen closely — this is huge. Are you ready?"
     ssml = generate_ssml(text, is_hook=False)
 
-    assert 'rate="+4%"' in ssml
+    assert 'rate="+12%"' in ssml
     assert 'pitch="+0Hz"' in ssml
-    assert '<break time="180ms"/>' in ssml
-    assert '<break time="320ms"/>' in ssml
+    assert '<break time="120ms"/>' in ssml
+    assert '<break time="200ms"/>' in ssml
 
 
 def test_parse_ssml_tokens():

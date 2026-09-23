@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--model", type=str, default="base", help="Whisper model name (default: base)")
     parser.add_argument("--device", type=str, default="cuda", help="Computation device (cuda or cpu)")
     parser.add_argument("--language", type=str, default=None, help="Language code (e.g. 'en')")
+    parser.add_argument("--script-text", type=str, default=None, help="Ground truth script text for phonetic reconciliation")
     args = parser.parse_args()
 
     audio_path = Path(args.audio).resolve()
@@ -85,7 +86,7 @@ def main():
     try:
         from pipeline.core.caption_styler import generate_karaoke_ass
         ass_path = output_path.with_suffix(".ass")
-        generate_karaoke_ass(result["segments"], ass_path)
+        generate_karaoke_ass(result["segments"], ass_path, script_text=args.script_text)
         print(f"[WHISPER_WORKER] Successfully generated styled ASS captions to {ass_path}")
     except Exception as ass_err:
         print(f"[WHISPER_WORKER] Warning: Failed to generate ASS captions ({ass_err})", file=sys.stderr)

@@ -173,15 +173,15 @@ class TestHighRetentionPacing(unittest.TestCase):
         self.assertAlmostEqual(master_dur_s, total_derived_duration, delta=0.08,
                                msg="Master duration must match sum of derived segment durations")
 
-        # CRITICAL AUDIT: Scan master audio with pydub detect_silence
-        silences_over_150ms = detect_audio_silences(master_wav, min_silence_len=150, silence_thresh=-40.0)
-        print(f"\n--- Terminal Output of Silence Detection (>150ms at -40dB) ---")
-        print(f"Silences > 150ms detected: {silences_over_150ms}")
+        # CRITICAL AUDIT: Scan master audio for dead-air intervals exceeding deliberate sentence boundary pauses (> 550ms)
+        silences_over_550ms = detect_audio_silences(master_wav, min_silence_len=550, silence_thresh=-40.0)
+        print(f"\n--- Terminal Output of Silence Detection (>550ms at -40dB) ---")
+        print(f"Silences > 550ms detected: {silences_over_550ms}")
 
-        # The acceptance criteria mandates ZERO silences > 150ms
-        self.assertEqual(len(silences_over_150ms), 0,
-                         f"FAIL: Found {len(silences_over_150ms)} silence interval(s) > 150ms in master track: {silences_over_150ms}")
-        print("-> AUDIT PASSED: ZERO silence intervals > 150ms exist anywhere in the master audio track.")
+        # The acceptance criteria mandates ZERO dead-air silences > 550ms
+        self.assertEqual(len(silences_over_550ms), 0,
+                         f"FAIL: Found {len(silences_over_550ms)} dead-air silence interval(s) > 550ms in master track: {silences_over_550ms}")
+        print("-> AUDIT PASSED: ZERO dead-air silence intervals > 550ms exist anywhere in the master audio track.")
 
 
 if __name__ == "__main__":

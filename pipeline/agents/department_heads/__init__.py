@@ -25,11 +25,16 @@ from pipeline.agents.department_heads.head_of_compliance import (
 )
 from pipeline.agents.department_heads.head_of_post import HeadOfPost, head_of_post
 from pipeline.agents.department_heads.head_of_story import HeadOfStory, head_of_story
+from pipeline.agents.department_heads.head_of_visual_relevance import (
+    HeadOfVisualRelevance,
+    head_of_visual_relevance,
+)
 
 DEPARTMENT_HEADS: Dict[str, BaseDepartmentHead] = {
     "story": head_of_story,
     "audio": head_of_audio,
     "art": head_of_art,
+    "visual_relevance": head_of_visual_relevance,
     "post": head_of_post,
     "compliance": head_of_compliance,
 }
@@ -44,6 +49,8 @@ __all__ = [
     "head_of_audio",
     "HeadOfArt",
     "head_of_art",
+    "HeadOfVisualRelevance",
+    "head_of_visual_relevance",
     "HeadOfPost",
     "head_of_post",
     "HeadOfCompliance",

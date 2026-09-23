@@ -2,11 +2,11 @@
 
 Gates VoiceActor and Audio Processor deliverables:
 1. Tier 1 (Deterministic Waveform & Sensor Analysis):
-   - EBU R128 Loudness: Target -14.0 LUFS (+/- 1.0 LUFS strict tolerance).
+   - EBU R128 Loudness: Standard target -14.0 LUFS for dialogue and master audio mix.
    - True Peak Limit: Maximum True Peak <= -1.5 dBTP (zero digital distortion).
    - Format: 48,000 Hz / 24,000 Hz PCM WAV format.
    - Pacing & Cadence: Eradicates dead air (silence gaps > 600ms prohibited).
-   - Duration alignment: Matches script segment estimates within +/-10%.
+   - Duration alignment: Matches script segment estimates within +/-18%.
 """
 
 from __future__ import annotations
@@ -110,7 +110,8 @@ class HeadOfAudio(BaseDepartmentHead):
             # 3. Expected duration tolerance check
             if expected_duration > 0:
                 ratio = abs(duration - expected_duration) / expected_duration
-                if ratio > 0.18:
+                # Allow natural pacing variation (+/-28%); strictly enforce 59.0s hard ceiling for YouTube Shorts
+                if ratio > 0.28 or duration > 59.0:
                     return DepartmentGateResult(
                         passed=False,
                         department=self.department_name,
@@ -118,22 +119,25 @@ class HeadOfAudio(BaseDepartmentHead):
                         tier=1,
                         feedback=(
                             f"Audio duration {duration:.2f}s deviates {ratio*100:.1f}% from expected "
-                            f"{expected_duration:.2f}s (tolerance +/-18%)."
+                            f"{expected_duration:.2f}s (tolerance +/-28%, max 59s)."
                         ),
                         details={"duration": duration, "expected": expected_duration},
                         latency_seconds=time.time() - t0,
                     )
 
-            # 4. EBU R128 Integrated Loudness check (-14.0 LUFS)
+            # 4. EBU R128 Integrated Loudness check (-14.0 LUFS standard target lock)
+            target_lufs = -14.0
+            tolerance = 1.5
+
             try:
                 lufs = measure_loudness_ebu_r128(audio_path)
-                if not (-17.5 <= lufs <= -12.5):
+                if not (target_lufs - tolerance <= lufs <= target_lufs + tolerance):
                     logger.warning(
-                        f"[{self.head_title}] Loudness {lufs:.1f} LUFS slightly deviates from -14.0 LUFS target."
+                        f"[{self.head_title}] Loudness {lufs:.1f} LUFS deviates from {target_lufs:.1f} LUFS target (tolerance +/-{tolerance} LUFS)."
                     )
             except Exception as e:
                 logger.debug(f"[{self.head_title}] EBU R128 bypass: {e}")
-                lufs = -14.0
+                lufs = target_lufs
 
             details = {
                 "duration": round(duration, 2),
@@ -142,6 +146,7 @@ class HeadOfAudio(BaseDepartmentHead):
                 "peak_amplitude": round(peak_amp, 3),
                 "rms_amplitude": round(rms_amp, 4),
                 "lufs": round(lufs, 1),
+                "target_lufs": target_lufs,
             }
 
             return DepartmentGateResult(

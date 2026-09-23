@@ -297,7 +297,7 @@ class PublisherAgent:
         if token_path.exists():
             from google.oauth2.credentials import Credentials
             try:
-                creds = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_SCOPES)
+                creds = Credentials.from_authorized_user_file(str(token_path))
             except Exception as e:
                 logger.warning(f"Failed to load credentials from {token_path}: {e}")
 
@@ -339,7 +339,10 @@ class PublisherAgent:
                 "title": title[:100],
                 "description": description[:5000],
                 "tags": tags,
-                "categoryId": "28"  # Science & Technology
+                "categoryId": "24" if any(k in title.lower() for k in [
+                    "brainrot", "aura", "skibidi", "lock in", "viral", "sigma",
+                    "italian", "ohio", "rizz", "slay", "based", "entertainment"
+                ]) else "28"  # 24=Entertainment, 28=Science & Technology
             },
             "status": {
                 "privacyStatus": privacy_status,

@@ -12,7 +12,7 @@ Enforces strict verification gates between every pipeline stage transition:
      captions in pixel frame (Rule 10).
 
 2. TIER 2 - SEMANTIC (Gemini call, ONLY where Tier 1 cannot catch the failure):
-   - Copywriter output: Separate cheap-model call (gemini-3.6-flash via Chief Critic)
+   - Copywriter output: Separate cheap-model call (gemini-3.6-flash via Script Critic)
      judging narrative coherence, repetition, and pacing fit.
    - Voice Actor & Art Director: Tier 2 semantic checks are EXPLICITLY OMITTED by default
      to prevent quota waste since Tier 1 checks are decisive.
@@ -297,16 +297,12 @@ def verify_retention_pacing(
 
 
 
-def estimate_spoken_length(script: Script, target_wpm: float = 140.0) -> float:
+def estimate_spoken_length(script: Script, target_wpm: float = 145.0) -> float:
     """Estimates spoken voiceover duration in seconds from script segment narration text.
-    
-    Prefers script.total_estimated_duration() if defined by the scriptwriter;
-    otherwise computes spoken length based on natural cadence (~140 WPM) plus phrase pauses.
-    """
-    total_est = script.total_estimated_duration()
-    if total_est and total_est >= 10.0:
-        return total_est
 
+    Computes spoken length based on natural cadence (~145 WPM) plus phrase pauses,
+    never treating the LLM-generated duration_seconds field as authoritative.
+    """
     words = [w for seg in script.segments for w in seg.narration.split()]
     word_count = len(words)
     spoken_seconds = (word_count / target_wpm) * 60.0
@@ -664,7 +660,7 @@ def verify_editor(
 # ==============================================================================
 
 class CopywriterSemanticScore(BaseModel):
-    """Structured critique contract from Chief Critic."""
+    """Structured critique contract from Script Critic."""
     coherence_score: int = Field(ge=1, le=10, description="1-10 logical narrative flow from hook to resolution")
     repetition_score: int = Field(ge=1, le=10, description="1-10 absence of redundant phrases or buzzword echo")
     pacing_score: int = Field(ge=1, le=10, description="1-10 alignment between spoken length and scene duration")
@@ -679,7 +675,7 @@ def verify_copywriter_semantic(
 ) -> VerificationResult:
     """Tier 2: Semantic check on Copywriter output using a fast cheap model.
     
-    Routes to gemini-3.6-flash via AgentRole.CHIEF_CRITIC.
+    Routes to gemini-3.6-flash via AgentRole.CHIEF_CRITIC (acting as Script Critic for script phase).
     Judges:
     - Narration coherence across scenes.
     - Repetition / redundant phrasing.
@@ -702,7 +698,7 @@ def verify_copywriter_semantic(
         )
 
         prompt = (
-            f"Critique the following short-form video script for YouTube Shorts/Reels.\n\n"
+            f"Critique the following short-form video script for YouTube Shorts.\n\n"
             f"TOPIC: {topic}\n"
             f"NICHE: {niche}\n"
             f"HOOK: {script.hook}\n"
@@ -710,15 +706,16 @@ def verify_copywriter_semantic(
             f"Evaluate:\n"
             f"1. Coherence: Does the idea logically progress from hook to payoff?\n"
             f"2. Repetition: Are there annoying repeated phrases or circular wording?\n"
-            f"3. Pacing: Does the spoken narration fit each scene's target duration without cramming or dead air?\n"
-            f"Score each criterion 1 to 10. Be strict."
+            f"3. Pacing: Does the spoken narration fit each scene's target duration without cramming or dead air?\n\n"
+            f"Scoring Rubric: Score each criterion 1 to 10.\n"
+            f"Pass/fail threshold: The script must achieve a score of >= 6 on Coherence, >= 6 on Repetition, and >= 6 on Pacing to pass (all individual criteria >= 6). Be strict and objective."
         )
 
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=CopywriterSemanticScore,
             temperature=0.2,
-            system_instruction="You are an uncompromising Chief Critic evaluating short-form script quality."
+            system_instruction="You are an uncompromising Script Critic evaluating short-form script quality."
         )
 
         resp = client.models.generate_content(
@@ -750,7 +747,7 @@ def verify_copywriter_semantic(
 
         if passed:
             logger.info(
-                f"[STAGE_GATE] [TIER 2] {stage} PASSED (Coherence: {parsed_critique.coherence_score}/10, "
+                f"[SCRIPT_CRITIC] [STAGE_GATE] [TIER 2] {stage} PASSED (Coherence: {parsed_critique.coherence_score}/10, "
                 f"Repetition: {parsed_critique.repetition_score}/10, Pacing: {parsed_critique.pacing_score}/10) [{dt:.2f}s]"
             )
             return VerificationResult(
@@ -768,7 +765,7 @@ def verify_copywriter_semantic(
                 f"Repetition={parsed_critique.repetition_score}/10, Pacing={parsed_critique.pacing_score}/10. "
                 f"Critique: {parsed_critique.critique}"
             )
-            logger.warning(f"[STAGE_GATE] [TIER 2] {stage} REJECTED: {reason}")
+            logger.warning(f"[SCRIPT_CRITIC] [STAGE_GATE] [TIER 2] {stage} REJECTED: {reason}")
             return VerificationResult(
                 passed=False,
                 stage=stage,

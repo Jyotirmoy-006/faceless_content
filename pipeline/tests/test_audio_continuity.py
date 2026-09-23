@@ -94,9 +94,9 @@ class TestAudioContinuity(unittest.TestCase):
             pass
 
     def test_criteria_1_loudness_normalization_convergence(self):
-        """CRITERIA 1: Verify two-pass EBU R128 normalizes audio chunks to -16 LUFS and -1.5 dBTP."""
+        """CRITERIA 1: Verify two-pass EBU R128 normalizes audio chunks to -14 LUFS and -1.5 dBTP."""
         print("\n" + "=" * 80)
-        print("CRITERIA 1: Two-Pass EBU R128 Loudness Normalization Verification")
+        print("CRITERIA 1: Two-Pass EBU R128 Loudness Normalization Verification (-14.0 LUFS)")
         print("=" * 80)
 
         # Generate sample chunks from edge-tts and piper
@@ -114,7 +114,7 @@ class TestAudioContinuity(unittest.TestCase):
             ("piper-fallback", out_piper)
         ]
 
-        print(f"{'Engine':<18} | {'Raw File':<20} | {'Pre-LUFS':<10} | {'Post-LUFS':<10} | {'Post TruePeak (dBTP)':<20} | {'Delta to -16 LUFS'}")
+        print(f"{'Engine':<18} | {'Raw File':<20} | {'Pre-LUFS':<10} | {'Post-LUFS':<10} | {'Post TruePeak (dBTP)':<20} | {'Delta to -14 LUFS'}")
         print("-" * 95)
 
         for engine, wav_p in samples:
@@ -122,23 +122,23 @@ class TestAudioContinuity(unittest.TestCase):
             pre_stats = measure_loudness_ebu_r128(wav_p)
             pre_lufs = pre_stats.get("input_i", -99.0)
 
-            # Normalize to -16.0 LUFS
+            # Normalize to -14.0 LUFS
             norm_path = wav_p.with_name(f"{wav_p.stem}_renorm.wav")
-            _, norm_stats = normalize_loudness_ebu_r128(wav_p, norm_path, target_lufs=-16.0, target_tp=-1.5)
+            _, norm_stats = normalize_loudness_ebu_r128(wav_p, norm_path, target_lufs=-14.0, target_tp=-1.5)
 
             # Measure post-normalization stats
             post_stats = measure_loudness_ebu_r128(norm_path)
             post_lufs = post_stats.get("input_i", -99.0)
             post_tp = post_stats.get("input_tp", -99.0)
-            delta = abs(post_lufs - (-16.0))
+            delta = abs(post_lufs - (-14.0))
 
             print(f"{engine:<18} | {wav_p.name:<20} | {pre_lufs:>8.2f}LU | {post_lufs:>8.2f}LU | {post_tp:>18.2f}dBTP | {delta:>12.2f} LU")
 
             # Assert convergence to target
-            self.assertAlmostEqual(post_lufs, -16.0, delta=0.6, msg=f"{engine} did not converge to -16 LUFS")
+            self.assertAlmostEqual(post_lufs, -14.0, delta=0.6, msg=f"{engine} did not converge to -14 LUFS")
             self.assertLessEqual(post_tp, -1.4, msg=f"{engine} true peak exceeds -1.5 dBTP margin")
 
-        print("-> CRITERIA 1 PASSED: Both Edge-TTS and Piper chunks converge strictly to -16.0 LUFS target.")
+        print("-> CRITERIA 1 PASSED: Both Edge-TTS and Piper chunks converge strictly to -14.0 LUFS target.")
 
     def test_criteria_2_punctuation_aware_pauses(self):
         """CRITERIA 2: Verify silence duration between sentence pairs varies with punctuation."""
@@ -224,7 +224,7 @@ class TestAudioContinuity(unittest.TestCase):
         print(f"Master Hybrid Loudness Range:      {hybrid_stats.get('input_lra', 0):.2f} LU")
 
         # Verify loudness consistency across hybrid switch
-        self.assertAlmostEqual(hybrid_stats.get("input_i", 0), -16.0, delta=1.5)
+        self.assertAlmostEqual(hybrid_stats.get("input_i", 0), -14.0, delta=1.5)
         print("-> CRITERIA 3 PASSED: Seamless loudness across edge-tts -> piper-fallback -> edge-tts transition.")
 
     def test_criteria_4_duration_dependency_inversion_real_script(self):

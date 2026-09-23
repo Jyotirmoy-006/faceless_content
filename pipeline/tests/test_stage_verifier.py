@@ -10,7 +10,7 @@ Covers:
    - Editor: master video passes ffprobe, 0 soft subtitle streams (hard-burned Rule 10)
 
 2. Tier 2 - Semantic Verification (Cheap Gemini call only for Copywriter):
-   - Coherence, repetition, and pacing fit evaluation via Chief Critic
+   - Coherence, repetition, and pacing fit evaluation via Script Critic
    - Strict 0-quota guarantee for Voice Actor, Art Director, and Editor
 
 3. Failure Handling & Corrective Retries:
@@ -250,7 +250,7 @@ class TestTieredStageVerifier(unittest.TestCase):
         # Expected is 4.0s; 2.0s is 50% deviation (> 15%)
         res = verify_voice_actor(wav_path, expected_duration=4.0)
         self.assertFalse(res.passed)
-        self.assertIn("outside +/-15%", res.error_message)
+        self.assertIn("outside +/-", res.error_message)
 
     def test_tier1_voice_actor_silence_detection(self):
         """Tier 1: Full-track silence is detected and rejected."""

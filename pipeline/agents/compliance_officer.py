@@ -230,6 +230,7 @@ def upload_or_reuse_gemini_file(
 
 COMPLIANCE_SYSTEM_INSTRUCTION = """You are the autonomous Compliance Officer and Risk/Safety Gate for YouTube Short-form video production.
 Your sole mission is risk, safety, policy, and copyright compliance. You are completely independent of aesthetic or quality critiques.
+Do not factor production quality or artistic merit into risk level — evaluate only the three categories above.
 
 Assess the provided video (visuals and spoken audio) across three mandatory YouTube-scoped categories:
 
@@ -285,11 +286,18 @@ def _evaluate_heuristic_fallback(
     """Deterministic heuristic evaluation used for dry-runs and testing."""
     combined = f"{topic} {niche} {narration_text}".lower()
 
+    # Sanitize benign tech/economic metaphors from false positive explosive blocks
+    sanitized = combined
+    for idiom in ["time bomb", "time bombs", "ticking time bomb", "ticking time bombs", "photobomb"]:
+        sanitized = sanitized.replace(idiom, "critical hazard")
+
     # High-risk trigger patterns
     high_patterns = [
-        "bomb", "explosive", "suicide", "terror", "hate speech", "kill", "massacre",
-        "nazi", "child exploit", "meth", "fentanyl", "copyright rip", "mickey mouse official",
-        "iron man real movie clip", "dead body", "weapon manufacture"
+        r"\b(bomb|bombs)\b", r"\bexplosives?\b", r"\bsuicide\b", r"\bterror(?:ism|ist)?\b",
+        r"\bhate speech\b", r"\bkill(?:ing)?\b", r"\bmassacre\b", r"\bnazi\b",
+        r"\bchild exploit\b", r"\bmeth\b", r"\bfentanyl\b", r"\bcopyright rip\b",
+        r"\bmickey mouse official\b", r"\biron man real movie clip\b", r"\bdead body\b",
+        r"\bweapon manufacture\b"
     ]
 
     # Medium-risk trigger patterns
@@ -298,7 +306,7 @@ def _evaluate_heuristic_fallback(
         "conspiracy", "nsfw rumor", "shocking truth", "celebrity gossip", "borderline"
     ]
 
-    if any(p in combined for p in high_patterns):
+    if any(re.search(p, sanitized) for p in high_patterns):
         return RiskReport(
             community_guidelines=CategoryRisk(
                 risk_level=RiskLevel.HIGH,

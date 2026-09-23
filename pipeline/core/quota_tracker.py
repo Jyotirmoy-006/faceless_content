@@ -199,6 +199,8 @@ class QuotaTracker:
         available = self.get_available_quota(current_time)
         return available >= units
 
+    can_spend = has_budget
+
     def check_and_reserve(self, units: int = YOUTUBE_VIDEO_UPLOAD_COST, current_time: Optional[datetime] = None) -> bool:
         """Raises InsufficientQuotaError if requested Data API units not available."""
         available = self.get_available_quota(current_time)

@@ -38,13 +38,6 @@ from pipeline.agents.ideator import ideator
 from pipeline.agents.scriptwriter import get_valid_script
 from pipeline.agents.director import orchestrate_video
 from pipeline.agents.publisher import publisher, PublishResult, PublishStatus
-from pipeline.core.stage_verifier import (
-    verify_creative_director,
-    verify_copywriter,
-    verify_copywriter_structural,
-    run_stage_with_verification,
-    StageVerificationError
-)
 from pipeline.agents.compliance_officer import (
     assess_video_compliance,
     enforce_compliance_gate,
@@ -64,6 +57,7 @@ from pipeline.agents.department_heads import (
     DepartmentGateRejectionError,
 )
 
+from pipeline.core.stage_verifier import verify_copywriter
 from pipeline.core.logger import get_logger
 from pipeline.dashboard.database import record_run_telemetry, update_video_gate_status
 from pipeline.agents.strategist import strategist
@@ -185,6 +179,193 @@ def scheduler_lock(lock_path: Path = LOCK_FILE) -> Generator[bool, None, None]:
 # PIPELINE STAGE COORDINATION & TELEMETRY
 # ==============================================================================
 
+
+# ==============================================================================
+# YOUTUBE METADATA HELPERS (BRAINROT / ENTERTAINMENT OPTIMIZED)
+# ==============================================================================
+
+# Brainrot-specific hashtag stack — ordered by search volume & algorithm weight
+_BRAINROT_TAG_STACK = [
+    "#brainrot", "#viral", "#fyp", "#shorts", "#trending", "#foryou",
+    "#aura", "#lockin", "#skibidi", "#sigma", "#entertainment",
+    "#GenZ", "#GenAlpha", "#memes", "#funny", "#relatable",
+]
+
+# Per-topic keyword injections for higher discoverability
+_TOPIC_TAG_MAP: dict[str, list[str]] = {
+    "brain": ["#brainrot", "#dopamine", "#scrolling", "#addicted"],
+    "aura": ["#aurafarming", "#aurapoints", "#auratierlist", "#vibes"],
+    "italian": ["#italianbrainrot", "#AIslop", "#surreal", "#absurd"],
+    "lock": ["#lockin", "#productivity", "#grindset", "#sigma"],
+    "skibidi": ["#skibidilore", "#skibiditoilet", "#genz", "#lore"],
+}
+
+
+def build_youtube_description(concept, script) -> str:
+    """Builds an SEO-optimized YouTube description for brainrot/entertainment content.
+
+    Injects a narrative hook, the full narration for subtitle indexing,
+    a CTA, and a brainrot hashtag stack.
+    """
+    narration = script.full_narration()
+    topic_lower = concept.topic.lower()
+    niche = getattr(concept, "niche", "tech")
+
+    if niche == "entertainment" or any(k in topic_lower for k in [
+        "brainrot", "aura", "skibidi", "lock in", "viral", "sigma", "italian"
+    ]):
+        cta = "🔥 Follow for daily brainrot — new drop every day.\n💬 Comment your aura score below ⬇️"
+        hashtag_block = " ".join(_BRAINROT_TAG_STACK)
+        description = (
+            f"{concept.topic}\n\n"
+            f"{narration}\n\n"
+            f"{cta}\n\n"
+            f"{hashtag_block}"
+        )
+    else:
+        description = f"{narration}\n\n#shorts #{niche} #facts #viral"
+
+    return description[:5000]
+
+
+def build_youtube_tags(concept) -> list[str]:
+    """Builds a rich tag list for brainrot content with per-topic keyword injection."""
+    topic_lower = concept.topic.lower()
+    niche = getattr(concept, "niche", "tech")
+
+    base_tags = list(_BRAINROT_TAG_STACK) if niche == "entertainment" else [
+        f"#{niche}", "#shorts", "#facts", "#education", "#viral"
+    ]
+
+    # Inject topic-specific tags
+    for keyword, extra_tags in _TOPIC_TAG_MAP.items():
+        if keyword in topic_lower:
+            base_tags = extra_tags + base_tags
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    deduped = []
+    for t in base_tags:
+        if t not in seen:
+            seen.add(t)
+            deduped.append(t)
+
+    return deduped[:30]  # YouTube allows max 30 tags
+
+
+# ==============================================================================
+# VIRALITY EVALUATOR (PRE-PUBLISH GATE)
+# ==============================================================================
+
+# Scoring weights (must sum to 1.0)
+_VIRALITY_WEIGHTS = {
+    "hook_strength": 0.30,       # First sentence scroll-stop power
+    "aura_lockin_signals": 0.20, # Brainrot cultural keywords present
+    "replayability": 0.20,       # Loop triggers, cliffhangers, open loops
+    "pacing_density": 0.15,      # Words-per-second estimated density
+    "title_ctr_power": 0.15,     # Title hook strength (numbers, caps, emotion)
+}
+
+_AURA_KEYWORDS = {
+    "aura", "lockin", "lock in", "sigma", "skibidi", "brainrot", "brain rot",
+    "viral", "based", "rizz", "ohio", "slay", "cope", "ratio", "npc", "lore",
+    "italian", "goat", "delulu", "unhinged", "w rizz", "no cap", "bussin"
+}
+_HOOK_POWER_WORDS = {
+    "secret", "dark", "hidden", "nobody", "they hid", "actually", "real reason",
+    "truth", "shocking", "insane", "wild", "you won't", "literally", "broke",
+    "every", "always", "never", "can't stop", "impossible", "lost it"
+}
+_REPLAY_TRIGGERS = {
+    "wait", "but here's", "plot twist", "the twist", "it gets worse",
+    "but then", "actually", "the real", "origin", "nobody talks about"
+}
+
+
+def evaluate_virality(concept, script) -> dict:
+    """Scores a concept + script on virality dimensions before YouTube publish.
+
+    Returns:
+        dict with keys: scores (per dimension), total (0-10), verdict (PUSH/HOLD/REJECT),
+        and breakdown (human-readable per-dimension notes).
+    """
+    topic = concept.topic.lower()
+    narration = script.full_narration().lower()
+    segments = script.segments
+    hook_text = segments[0].narration.lower() if segments else narration[:200]
+    word_count = len(narration.split())
+    # Estimate target duration from concept (default 30s)
+    target_dur = getattr(concept, "target_duration", 30)
+    wps = word_count / max(target_dur, 1)
+
+    scores: dict[str, float] = {}
+    notes: dict[str, str] = {}
+
+    # 1. Hook Strength (0–10): how many scroll-stop power words in the first segment
+    hook_hits = sum(1 for w in _HOOK_POWER_WORDS if w in hook_text)
+    hook_score = min(10.0, hook_hits * 2.5 + (3.0 if "?" in hook_text or "!" in hook_text else 0))
+    scores["hook_strength"] = hook_score
+    notes["hook_strength"] = f"{hook_hits} power words detected in hook. Score: {hook_score:.1f}/10"
+
+    # 2. Aura/Brainrot Signals (0–10): cultural keyword density
+    aura_hits = sum(1 for k in _AURA_KEYWORDS if k in narration or k in topic)
+    aura_score = min(10.0, aura_hits * 1.8)
+    scores["aura_lockin_signals"] = aura_score
+    notes["aura_lockin_signals"] = f"{aura_hits} brainrot signals found. Score: {aura_score:.1f}/10"
+
+    # 3. Replayability (0–10): loop-trigger language + multi-segment variety
+    replay_hits = sum(1 for t in _REPLAY_TRIGGERS if t in narration)
+    seg_count_bonus = min(3.0, len(segments) * 0.6)
+    replay_score = min(10.0, replay_hits * 2.0 + seg_count_bonus)
+    scores["replayability"] = replay_score
+    notes["replayability"] = f"{replay_hits} loop triggers, {len(segments)} segments. Score: {replay_score:.1f}/10"
+
+    # 4. Pacing Density (0–10): target 3.5–5.5 wps for brainrot pacing
+    if 3.5 <= wps <= 5.5:
+        pacing_score = 10.0
+    elif 3.0 <= wps < 3.5 or 5.5 < wps <= 6.5:
+        pacing_score = 7.0
+    else:
+        pacing_score = 4.0
+    scores["pacing_density"] = pacing_score
+    notes["pacing_density"] = f"{wps:.1f} words/sec (target 3.5–5.5). Score: {pacing_score:.1f}/10"
+
+    # 5. Title CTR Power (0–10): caps, numbers, emotion in title
+    import re as _re
+    title = concept.topic
+    caps_words = len(_re.findall(r'\b[A-Z]{2,}\b', title))
+    has_number = bool(_re.search(r'\d', title))
+    has_emoji = bool(_re.search(r'[\U00010000-\U0010ffff]', title))
+    hook_in_title = sum(1 for w in _HOOK_POWER_WORDS if w in title.lower())
+    ctr_score = min(10.0, caps_words * 1.5 + (2.0 if has_number else 0)
+                    + (1.5 if has_emoji else 0) + hook_in_title * 1.5)
+    scores["title_ctr_power"] = ctr_score
+    notes["title_ctr_power"] = (
+        f"CAPS={caps_words}, number={has_number}, emoji={has_emoji}, "
+        f"power_words={hook_in_title}. Score: {ctr_score:.1f}/10"
+    )
+
+    # Weighted total
+    total = sum(_VIRALITY_WEIGHTS[k] * scores[k] for k in _VIRALITY_WEIGHTS)
+
+    if total >= 7.0:
+        verdict = "PUSH"
+    elif total >= 5.0:
+        verdict = "HOLD"
+    else:
+        verdict = "REJECT"
+
+    return {
+        "scores": scores,
+        "total": round(total, 2),
+        "verdict": verdict,
+        "breakdown": notes,
+        "word_count": word_count,
+        "wps": round(wps, 2),
+    }
+
+
+
 def get_gpu_memory_allocated_mb() -> float:
     """Returns current PyTorch GPU allocated memory in MB."""
     try:
@@ -258,12 +439,20 @@ def run_pipeline(
                 angle=script_raw.get("hook", "Approved Concept Angle"),
                 target_duration=int(script.total_estimated_duration())
             )
-            c_res = verify_creative_director(concept)
-            s_res = verify_copywriter_structural(script)
-            telemetry["verification"]["creative_director"] = [c_res.to_dict()]
-            telemetry["verification"]["copywriter"] = [s_res.to_dict()]
-            if not c_res.passed or not s_res.passed:
-                raise StageVerificationError("RESUMED_INPUTS", 1, "Approved script failed structural verification")
+            story_concept_gate = head_of_story.inspect_tier1(concept)
+            story_script_gate = head_of_story.inspect_tier1(script, context={"topic": concept.topic, "niche": concept.niche})
+            telemetry["department_heads"]["story_concept"] = story_concept_gate.to_dict()
+            telemetry["department_heads"]["story_script"] = story_script_gate.to_dict()
+            telemetry["verification"]["creative_director"] = [story_concept_gate.to_dict()]
+            telemetry["verification"]["copywriter"] = [story_script_gate.to_dict()]
+            if not story_concept_gate.passed or not story_script_gate.passed:
+                err_feedback = story_script_gate.feedback or story_concept_gate.feedback or "Resumed script failed structural validation"
+                raise DepartmentGateRejectionError(
+                    department="story",
+                    head_title="Head of Story",
+                    tier=1,
+                    feedback=f"Resumed script failed Head of Story structural inspection: {err_feedback}"
+                )
 
             telemetry["concept"] = concept.model_dump()
             telemetry["stages"]["ideation"] = 0.0
@@ -289,16 +478,17 @@ def run_pipeline(
                 fallbacks = generate_fallback_ideas(niche)
                 return fallbacks[0]
 
-            concept, gate1_history = run_stage_with_verification(
-                stage_name="CREATIVE_DIRECTOR",
-                execute_fn=_generate_concept,
-                verify_fn=verify_creative_director,
+            initial_concept = _generate_concept()
+            concept, gate1_history = head_of_story.enforce_gate(
+                initial_artifact=initial_concept,
+                produce_fn=_generate_concept,
                 max_retries=2,
                 fallback_fn=_fallback_concept
             )
 
             telemetry["stages"]["ideation"] = time.time() - t0
             telemetry["concept"] = concept.model_dump()
+            telemetry["department_heads"]["story_concept"] = gate1_history[-1].to_dict()
             telemetry["verification"]["creative_director"] = [r.to_dict() for r in gate1_history]
             telemetry["simulation_trace"].append({
                 "step_index": 1,
@@ -313,18 +503,6 @@ def run_pipeline(
                 "status": "PASSED" if gate1_history[-1].passed else "FAILED"
             })
             logger.info(f"Concept approved: '{concept.topic}' ({concept.angle}) [{telemetry['stages']['ideation']:.2f}s]")
-
-            # Department Head Inspection: Head of Story (Concept Gate)
-            story_concept_gate = head_of_story.inspect(concept)
-            telemetry["department_heads"]["story_concept"] = story_concept_gate.to_dict()
-            if not story_concept_gate.passed:
-                raise DepartmentGateRejectionError(
-                    department="story",
-                    head_title="Head of Story",
-                    tier=story_concept_gate.tier,
-                    feedback=story_concept_gate.feedback or "Concept rejected by Head of Story.",
-                    details=story_concept_gate.details
-                )
 
             # STAGE 2: Scriptwriting (Copywriter / Scriptwriter Agent)
             print("[STAGE:SCRIPTWRITING]", flush=True)
@@ -342,10 +520,11 @@ def run_pipeline(
                 from pipeline.agents.scriptwriter import load_fallback_template
                 return load_fallback_template(topic=concept.topic, niche=concept.niche)
 
-            script, gate2_history = run_stage_with_verification(
-                stage_name="COPYWRITER",
-                execute_fn=_generate_script,
-                verify_fn=lambda s: verify_copywriter(s, topic=concept.topic, niche=concept.niche),
+            initial_script = _generate_script()
+            script, gate2_history = head_of_story.enforce_gate(
+                initial_artifact=initial_script,
+                produce_fn=_generate_script,
+                context={"topic": concept.topic, "niche": concept.niche},
                 max_retries=2,
                 fallback_fn=_fallback_script
             )
@@ -356,6 +535,7 @@ def run_pipeline(
                 "segments_count": len(script.segments),
                 "estimated_duration": script.total_estimated_duration()
             }
+            telemetry["department_heads"]["story_script"] = gate2_history[-1].to_dict()
             telemetry["verification"]["copywriter"] = [r.to_dict() for r in gate2_history]
             telemetry["simulation_trace"].append({
                 "step_index": 2,
@@ -373,21 +553,6 @@ def run_pipeline(
                 f"Script structured: {len(script.segments)} scenes, "
                 f"~{script.total_estimated_duration():.1f}s total duration [{telemetry['stages']['scriptwriting']:.2f}s]"
             )
-
-            # Department Head Inspection: Head of Story (Script Gate)
-            story_script_gate = head_of_story.inspect(
-                script,
-                context={"topic": concept.topic, "niche": concept.niche}
-            )
-            telemetry["department_heads"]["story_script"] = story_script_gate.to_dict()
-            if not story_script_gate.passed:
-                raise DepartmentGateRejectionError(
-                    department="story",
-                    head_title="Head of Story",
-                    tier=story_script_gate.tier,
-                    feedback=story_script_gate.feedback or "Script rejected by Head of Story.",
-                    details=story_script_gate.details
-                )
 
             # Human-in-the-loop review check
             if require_approval:
@@ -423,7 +588,7 @@ def run_pipeline(
         video_path = orchestrate_video(
             script=script,
             output_path=rendered_output_path,
-            voice="en-US-AndrewMultilingualNeural",
+            voice="af_bella*0.6+bf_isabella*0.4",
             verification_history=telemetry["verification"]
         )
         if not video_path.exists() or video_path.stat().st_size == 0:
@@ -578,7 +743,7 @@ def run_pipeline(
             video_path,
             context={
                 "title": concept.topic,
-                "description": f"{script.full_narration()}\n\n#shorts #{concept.niche} #facts",
+                "description": build_youtube_description(concept, script),
                 "skip_publish": effective_skip_publish,
                 "video_path": video_path,
                 "topic": concept.topic,
@@ -589,24 +754,74 @@ def run_pipeline(
         )
         telemetry["department_heads"]["compliance"] = compliance_head_gate.to_dict()
         if not compliance_head_gate.passed:
-            raise DepartmentGateRejectionError(
-                department="compliance",
-                head_title="Head of Compliance",
-                tier=compliance_head_gate.tier,
-                feedback=compliance_head_gate.feedback or "Publishing rejected by Head of Compliance.",
-                details=compliance_head_gate.details
+            # Rule 13: MEDIUM → HOLD_FOR_REVIEW (pause for human clear), not fatal crash
+            hold_feedback = compliance_head_gate.feedback or "Publishing rejected by Head of Compliance."
+            hold_details = compliance_head_gate.details or {}
+            logger.warning(
+                f"[COMPLIANCE HEAD REJECTION] Tier {compliance_head_gate.tier} gate failed for "
+                f"'{concept.topic}': {hold_feedback}"
             )
+            print("[STAGE:COMPLIANCE_HELD]", flush=True)
+            print(f"[COMPLIANCE_HELD_REASON] {hold_feedback}", flush=True)
+
+            # Persist telemetry before exiting
+            try:
+                telemetry["total_wall_clock_time"] = time.time() - telemetry.get("start_time", time.time())
+                record_run_telemetry(telemetry, status="HELD_FOR_REVIEW", error_message=hold_feedback)
+            except Exception as db_err:
+                logger.warning(f"Could not persist compliance hold telemetry to SQLite: {db_err}")
+
+            sys.exit(10)
 
         if not effective_skip_publish:
             logger.info("\n>>> [STAGE 4] Multi-Platform Publishing (Publisher Agent)...")
-            
+
+            # ---------------------------------------------------------------
+            # VIRALITY GATE (Pre-Publish Evaluation)
+            # ---------------------------------------------------------------
+            virality = evaluate_virality(concept, script)
+            telemetry["virality"] = virality
+            v_total = virality["total"]
+            v_verdict = virality["verdict"]
+            print(f"[VIRALITY_GATE] Score: {v_total}/10 | Verdict: {v_verdict}", flush=True)
+            for dim, note in virality["breakdown"].items():
+                print(f"  [{dim}] {note}", flush=True)
+
+            if v_verdict == "REJECT":
+                logger.error(
+                    f"[VIRALITY_GATE_REJECT] Video '{concept.topic}' scored {v_total}/10 — "
+                    f"below 5.0 threshold. Aborting publish to protect channel quality."
+                )
+                print("[STAGE:VIRALITY_REJECTED]", flush=True)
+                telemetry["total_wall_clock_time"] = time.time() - telemetry.get("start_time", time.time())
+                try:
+                    record_run_telemetry(telemetry, status="VIRALITY_REJECTED",
+                                        error_message=f"Virality score {v_total}/10 below threshold")
+                except Exception:
+                    pass
+                sys.exit(11)
+
+            if v_verdict == "HOLD":
+                logger.warning(
+                    f"[VIRALITY_GATE_HOLD] Video '{concept.topic}' scored {v_total}/10 — "
+                    f"marginal virality. Publishing with caution."
+                )
+
+            # Build optimized metadata
+            yt_title = concept.topic
+            yt_description = build_youtube_description(concept, script)
+            yt_tags = build_youtube_tags(concept)
+            logger.info(f"[YOUTUBE_METADATA] Title: {yt_title}")
+            logger.info(f"[YOUTUBE_METADATA] Tags ({len(yt_tags)}): {yt_tags}")
+            logger.info(f"[YOUTUBE_METADATA] Description preview: {yt_description[:120]}...")
+
             # YouTube Shorts (Quota-gated)
             t0 = time.time()
             yt_res: PublishResult = publisher.publish_to_youtube(
                 video_path=video_path,
-                title=concept.topic,
-                description=f"{script.full_narration()}\n\n#shorts #{concept.niche} #facts",
-                tags=[f"#{concept.niche}", "#shorts", "#education"],
+                title=yt_title,
+                description=yt_description,
+                tags=yt_tags,
                 privacy_status="public",
                 dry_run=dry_run
             )

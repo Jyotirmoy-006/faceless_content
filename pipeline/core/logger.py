@@ -23,6 +23,15 @@ class StrictTimestampFormatter(logging.Formatter):
         super().__init__(fmt=fmt, datefmt=datefmt)
 
 
+def _is_queue_worker_subprocess() -> bool:
+    """Detects if this process was spawned by the dashboard queue worker.
+    
+    When --job-id is present, app.py already mirrors stdout to both log files,
+    so FileHandlers would cause every line to appear twice.
+    """
+    return "--job-id" in sys.argv
+
+
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """Returns a configured logger enforcing standard timestamp and tag formatting."""
     logger = logging.getLogger(name)
@@ -32,20 +41,21 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     if not logger.handlers:
         formatter = StrictTimestampFormatter()
 
-        # Stream Handler (stdout)
+        # Stream Handler (stdout) — always attached
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
 
-        # File Handlers
-        for path in [LOG_FILE_ROOT, LOG_FILE_SUB]:
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                file_handler = logging.FileHandler(str(path), encoding="utf-8")
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-            except Exception:
-                pass
+        # File Handlers — skip when spawned by queue worker (app.py mirrors stdout to files)
+        if not _is_queue_worker_subprocess():
+            for path in [LOG_FILE_ROOT, LOG_FILE_SUB]:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    file_handler = logging.FileHandler(str(path), encoding="utf-8")
+                    file_handler.setFormatter(formatter)
+                    logger.addHandler(file_handler)
+                except Exception:
+                    pass
 
         logger.propagate = False
 

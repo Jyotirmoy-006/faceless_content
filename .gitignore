@@ -79,3 +79,10 @@ ComfyUI_server/
 agent_images/
 node_modules/
 **/node_modules/
+
+# Runtime logs, staging & scratch
+pipeline/logs/
+pipeline/staging/
+pipeline/scratch/
+test_*.mp3
+*.mp3

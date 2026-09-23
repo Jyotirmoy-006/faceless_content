@@ -24,7 +24,8 @@ def normalize_clip(
     duration: Optional[float] = None,
     crf: int = 18,
     preset: str = "veryfast",
-    motion: str = "none"
+    motion: str = "none",
+    flash_intro: bool = False
 ) -> Path:
     """Normalizes an individual video clip to canonical specs using FFmpeg.
 
@@ -38,6 +39,7 @@ def normalize_clip(
         crf: Quality level (default 18 for visually lossless).
         preset: x264 speed preset.
         motion: Camera motion type ('none', 'zoom_in', 'zoom_out').
+        flash_intro: Whether to add a high-retention 0.10s white flash pattern interrupt.
 
     Returns:
         Path to the normalized video file.
@@ -72,6 +74,9 @@ def normalize_clip(
             )
     else:
         vf_filter = base_filter
+
+    if flash_intro:
+        vf_filter = f"{vf_filter},fade=t=in:st=0:d=0.10:color=white"
 
 
     # Detect if input has an audio stream

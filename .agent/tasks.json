@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "id": "02-01",
+    "title": "Autonomous Overnight Batch Scheduler & Niche Rotator",
+    "description": "Implement pipeline/scheduler/overnight_scheduler.py with niche rotation (tech, finance, psychology, history) and YouTube quota guard.",
+    "priority": 1,
+    "passes": false
+  },
+  {
+    "id": "02-02",
+    "title": "Multi-Platform Publisher & Webhook Notification Engine",
+    "description": "Unify publishing to YouTube Shorts and Instagram Reels with Discord/Telegram webhook notifications.",
+    "priority": 2,
+    "passes": false
+  },
+  {
+    "id": "02-03",
+    "title": "Post-Publishing Analytics Telemetry & Watchdog",
+    "description": "Implement analytics worker and GPU watchdog to track engagement metrics and recover stranded jobs.",
+    "priority": 3,
+    "passes": false
+  }
+]

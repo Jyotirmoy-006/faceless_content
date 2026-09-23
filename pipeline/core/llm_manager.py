@@ -20,6 +20,7 @@ Complies with:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,7 +41,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from pipeline.core.logger import get_logger
 from pipeline.core.notifier import notifier
-from pipeline.core.rate_limiter import global_rate_limiter
+from pipeline.core.rate_limiter import account_rate_limiter_pool, global_rate_limiter
 
 logger = get_logger("llm_manager")
 
@@ -69,24 +70,32 @@ class AgentRole(str, Enum):
     HEAD_OF_ART = "head_of_art"
     HEAD_OF_POST = "head_of_post"
     HEAD_OF_COMPLIANCE = "head_of_compliance"
+    HEAD_OF_VISUAL_RELEVANCE = "head_of_visual_relevance"
 
 
 # Strict Rule 14 Model Routing Mapping
+# Tier 1 (Pro): High-capability creative tasks — low RPD (~25/day)
+# Tier 2 (Flash): High-volume agents needing good quality — medium RPD (~1500/day)
+# Tier 3 (Flash-Lite): Budget/trivial tasks — high RPD (~1500/day)
 ROLE_MODEL_MAPPING: dict[AgentRole, str] = {
-    AgentRole.CREATIVE_DIRECTOR: "gemini-3.1-pro-preview",
-    AgentRole.BRAND_DESIGNER: "gemini-3.6-flash",
-    AgentRole.CHIEF_CRITIC: "gemini-3.6-flash",
-    AgentRole.COPYWRITER: "gemini-3.6-flash",
-    AgentRole.STRATEGIST: "gemini-3.5-flash-lite",
-    AgentRole.COMPLIANCE_OFFICER: "gemini-3.6-flash",
-    AgentRole.SAFETY_OFFICER: "gemini-3.6-flash",
-    AgentRole.SCRIPTWRITER: "gemini-3.6-flash",
-    AgentRole.IDEATOR: "gemini-3.6-flash",
-    AgentRole.HEAD_OF_STORY: "gemini-3.6-flash",
-    AgentRole.HEAD_OF_AUDIO: "gemini-3.6-flash",
-    AgentRole.HEAD_OF_ART: "gemini-3.6-flash",
-    AgentRole.HEAD_OF_POST: "gemini-3.6-flash",
-    AgentRole.HEAD_OF_COMPLIANCE: "gemini-3.6-flash",
+    # Tier 1: Pro
+    AgentRole.CREATIVE_DIRECTOR:      "gemini-3.1-pro-preview",
+    # Tier 2: Flash (high-volume agents per Rule 14)
+    AgentRole.CHIEF_CRITIC:           "gemini-3.6-flash",
+    AgentRole.COPYWRITER:             "gemini-3.6-flash",
+    AgentRole.COMPLIANCE_OFFICER:     "gemini-3.6-flash",
+    AgentRole.SAFETY_OFFICER:         "gemini-3.6-flash",
+    AgentRole.SCRIPTWRITER:           "gemini-3.6-flash",
+    AgentRole.IDEATOR:                "gemini-3.6-flash",
+    AgentRole.HEAD_OF_STORY:          "gemini-3.6-flash",
+    AgentRole.HEAD_OF_AUDIO:          "gemini-3.6-flash",
+    AgentRole.HEAD_OF_ART:            "gemini-3.6-flash",
+    AgentRole.HEAD_OF_POST:           "gemini-3.6-flash",
+    AgentRole.HEAD_OF_COMPLIANCE:     "gemini-3.6-flash",
+    AgentRole.HEAD_OF_VISUAL_RELEVANCE: "gemini-3.6-flash",
+    # Tier 3: Flash-Lite (budget tasks)
+    AgentRole.BRAND_DESIGNER:         "gemini-3.5-flash-lite",
+    AgentRole.STRATEGIST:             "gemini-3.5-flash-lite",
 }
 
 # Canonical ordered list for static round-robin role assignment
@@ -96,6 +105,21 @@ CANONICAL_ROLES_ORDER: list[AgentRole] = [
     AgentRole.CHIEF_CRITIC,
     AgentRole.COPYWRITER,
     AgentRole.STRATEGIST,
+]
+
+# Per-model daily call limits (RPD per account, Google AI free tier)
+# These are conservative estimates — check Google AI Studio for live values.
+MODEL_DAILY_LIMITS: dict[str, int] = {
+    "gemini-3.1-pro-preview": 25,
+    "gemini-3.6-flash": 1500,
+    "gemini-3.5-flash-lite": 1500,
+}
+
+# Auto-downgrade fallback chain: preferred → fallback → emergency → halt
+MODEL_FALLBACK_CHAIN: list[str] = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
 ]
 
 
@@ -109,6 +133,111 @@ class ErrorClassification(str, Enum):
 class AllAccountsQuarantinedError(RuntimeError):
     """Raised when all configured Google AI accounts are quarantined."""
     pass
+
+
+class AllModelsExhaustedError(RuntimeError):
+    """Raised when all models in the fallback chain have exhausted their daily RPD quota."""
+    pass
+
+
+MODEL_QUOTA_STATE_FILE = Path(__file__).resolve().parent / "gemini_model_quota_state.json"
+PACIFIC_TZ = __import__("zoneinfo").ZoneInfo("America/Los_Angeles")
+
+
+class ModelQuotaTracker:
+    """Tracks per-model daily API call counts with midnight PT auto-reset.
+    
+    Each model has an independent daily RPD counter. Persisted to disk so
+    counts survive process restarts within the same day.
+    """
+
+    def __init__(self, state_path: Path = MODEL_QUOTA_STATE_FILE) -> None:
+        self.state_path = state_path
+        self._counts: dict[str, int] = {}  # model_name -> calls_today
+        self._date_key: str = ""  # YYYY-MM-DD in Pacific Time
+        self._load()
+
+    def _today_key(self) -> str:
+        """Returns today's date string in Pacific Time (matches Google's reset schedule)."""
+        return datetime.now(PACIFIC_TZ).strftime("%Y-%m-%d")
+
+    def _load(self) -> None:
+        """Loads persisted quota state, auto-resetting if the date has rolled over."""
+        today = self._today_key()
+        if self.state_path.exists():
+            try:
+                with open(self.state_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                saved_date = data.get("date_key", "")
+                if saved_date == today:
+                    self._counts = data.get("counts", {})
+                    self._date_key = today
+                    return
+            except Exception:
+                pass
+        # New day or corrupt/missing file — start fresh
+        self._counts = {}
+        self._date_key = today
+
+    def _save(self) -> None:
+        """Persists current counts atomically."""
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_fd, temp_path = tempfile.mkstemp(
+                dir=self.state_path.parent, prefix="model_quota_", suffix=".tmp"
+            )
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json.dump({"date_key": self._date_key, "counts": self._counts}, f, indent=2)
+            os.replace(temp_path, self.state_path)
+        except Exception as e:
+            logger.warning(f"[MODEL_QUOTA] Could not persist quota state: {e}")
+
+    def _check_reset(self) -> None:
+        """Auto-resets counters if the Pacific Time date has rolled past midnight."""
+        today = self._today_key()
+        if today != self._date_key:
+            logger.info(f"[MODEL_QUOTA] New day detected ({self._date_key} → {today}). Resetting all model counters.")
+            self._counts = {}
+            self._date_key = today
+            self._save()
+
+    def record_call(self, model_name: str) -> None:
+        """Increments today's call count for a model after a successful API call."""
+        self._check_reset()
+        self._counts[model_name] = self._counts.get(model_name, 0) + 1
+        self._save()
+
+    def get_used(self, model_name: str) -> int:
+        """Returns how many calls have been made to this model today."""
+        self._check_reset()
+        return self._counts.get(model_name, 0)
+
+    def get_remaining(self, model_name: str) -> int:
+        """Returns how many daily calls remain for this model."""
+        limit = MODEL_DAILY_LIMITS.get(model_name, 1500)
+        return max(0, limit - self.get_used(model_name))
+
+    def is_exhausted(self, model_name: str) -> bool:
+        """Returns True if this model's daily RPD quota is fully spent."""
+        return self.get_remaining(model_name) <= 0
+
+    def get_status(self) -> dict[str, Any]:
+        """Returns a snapshot of all model quotas for telemetry/dashboard."""
+        self._check_reset()
+        status = {}
+        for model, limit in MODEL_DAILY_LIMITS.items():
+            used = self._counts.get(model, 0)
+            status[model] = {
+                "used": used,
+                "limit": limit,
+                "remaining": max(0, limit - used),
+                "exhausted": used >= limit,
+            }
+        return {"date": self._date_key, "models": status}
+
+
+# Global model quota tracker instance
+model_quota_tracker = ModelQuotaTracker()
 
 
 @dataclass
@@ -245,24 +374,53 @@ class LLMManager:
         return [acc for acc in self.accounts if not acc.is_quarantined]
 
     def resolve_model(self, role: AgentRole | str) -> str:
-        """Resolves target Gemini model name for an agent role per Rule 14."""
+        """Resolves target Gemini model name for an agent role per Rule 14.
+        
+        Checks per-model daily quota and auto-downgrades through the fallback
+        chain (Pro → Flash → Lite) if the preferred model is exhausted.
+        """
         if isinstance(role, str):
             try:
                 role = AgentRole(role.lower())
             except ValueError:
-                # Default unknown roles to copywriter/high-volume tier
                 role = AgentRole.COPYWRITER
 
-        model_name = ROLE_MODEL_MAPPING.get(role, "gemini-3.6-flash")
+        preferred_model = ROLE_MODEL_MAPPING.get(role, "gemini-3.6-flash")
 
         # Strict Rule 14 Verification: Never allow retired 1.5-era models
-        if any(retired in model_name for retired in RETIRED_PATTERNS):
+        if any(retired in preferred_model for retired in RETIRED_PATTERNS):
             raise ValueError(
-                f"Rule 14 Violation: Model '{model_name}' is retired and prohibited. "
+                f"Rule 14 Violation: Model '{preferred_model}' is retired and prohibited. "
                 "Creative Director must route to 'gemini-3.1-pro-preview'."
             )
 
-        return model_name
+        # Quota-aware auto-downgrade: walk fallback chain if preferred model is exhausted
+        if not model_quota_tracker.is_exhausted(preferred_model):
+            return preferred_model
+
+        # Find the preferred model's position in the fallback chain
+        try:
+            start_idx = MODEL_FALLBACK_CHAIN.index(preferred_model)
+        except ValueError:
+            start_idx = 0
+
+        # Walk downward through remaining fallback tiers
+        for fallback in MODEL_FALLBACK_CHAIN[start_idx + 1:]:
+            remaining = model_quota_tracker.get_remaining(fallback)
+            if remaining > 0:
+                logger.warning(
+                    f"[MODEL_DOWNGRADE] Role '{getattr(role, 'value', role)}' preferred "
+                    f"'{preferred_model}' (exhausted: {model_quota_tracker.get_remaining(preferred_model)}/"
+                    f"{MODEL_DAILY_LIMITS.get(preferred_model, '?')} remaining) "
+                    f"→ downgraded to '{fallback}' ({remaining}/{MODEL_DAILY_LIMITS.get(fallback, '?')} remaining)"
+                )
+                return fallback
+
+        # All models exhausted
+        raise AllModelsExhaustedError(
+            f"All models in fallback chain are exhausted for today. "
+            f"Quota status: {model_quota_tracker.get_status()}"
+        )
 
     def get_assigned_account(self, role: AgentRole | str) -> LLMAccount:
         """Returns the statically assigned account for an agent role.
@@ -441,8 +599,13 @@ class LLMManager:
             success = False
             for attempt in range(max_retries + 1):
                 try:
-                    # Single-Account Rate Limiter: strictly throttle calls to prevent 429 errors
-                    global_rate_limiter.acquire()
+                    # Rate Limiter: strictly throttle calls per unique API key without leaking credentials
+                    rate_key = (
+                        hashlib.sha256(account.api_key.encode()).hexdigest()[:16]
+                        if account.api_key
+                        else f"account-{account.account_id}"
+                    )
+                    account_rate_limiter_pool.acquire(rate_key)
 
                     logger.debug(
                         f"[LLM_CALL] Role: '{getattr(role, 'value', role)}' | "
@@ -454,9 +617,10 @@ class LLMManager:
                         config=config
                     )
 
-                    # Success: reset consecutive failures on this account
+                    # Success: reset consecutive failures and record quota usage
                     account.consecutive_auth_failures = 0
                     self.save_state()
+                    model_quota_tracker.record_call(model_name)
 
                     raw_text = response.text or ""
                     parsed = getattr(response, "parsed", None)

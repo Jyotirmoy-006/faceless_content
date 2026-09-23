@@ -22,7 +22,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from moviepy import VideoFileClip, concatenate_videoclips
 from pipeline.workers.normalize_worker import normalize_clip
-from pipeline.workers.comfyui_worker import generate_mock_image, apply_ken_burns_effect
+from pipeline.workers.comfyui_worker import generate_mock_image
+from pipeline.core.parallax_engine import render_parallax_clip
 
 
 def run_ffprobe(video_path: Path) -> Dict:
@@ -64,21 +65,27 @@ def main():
     # 2. Source Clip B: 30fps Pexels clip (720x1280)
     raw_clip_b = ROOT_DIR / "pipeline" / "assets_cache" / "pexels" / "futuristic_city_skyline__f17ccae9.mp4"
 
-    # 3. Source Clip C: ComfyUI Ken Burns 1080x1920 clip generated from 512x512 still
-    print("\n[STEP 1/5] Generating ComfyUI Ken Burns clip from 512x512 still...")
+    # 3. Source Clip C: ComfyUI Parallax 1080x1920 clip generated from 512x512 still
+    print("\n[STEP 1/5] Generating ComfyUI Parallax + Particle clip from 512x512 still...")
     still_img = generate_mock_image("A hyper-detailed glowing cybernetic core in a dark laboratory, neon blue", 512, 512)
     still_path = test_dir / "comfy_source_still_512.png"
     still_img.save(still_path)
 
-    comfy_clip_raw = test_dir / "raw_comfy_ken_burns.mp4"
-    burns_clip = apply_ken_burns_effect(
-        image=still_img,
+    synth_depth = still_img.convert("L")
+    depth_path = test_dir / "comfy_source_depth_512.png"
+    synth_depth.save(depth_path)
+
+    comfy_clip_raw = test_dir / "raw_comfy_parallax.mp4"
+    parallax_clip = render_parallax_clip(
+        image=still_path,
+        depth_map=depth_path,
         duration=3.0,
         fps=30,
-        zoom_factor=1.15,
-        out_size=(1080, 1920)
+        out_size=(1080, 1920),
+        motion_type="zoom_in",
+        particle_style="cyber_glints"
     )
-    burns_clip.write_videofile(
+    parallax_clip.write_videofile(
         str(comfy_clip_raw),
         fps=30,
         codec="libx264",
@@ -91,7 +98,7 @@ def main():
             "-movflags", "+faststart"
         ]
     )
-    burns_clip.close()
+    parallax_clip.close()
 
     # Create 3-second trimmed subclips of raw A and B to keep test fast and predictable
     trim_a = test_dir / "raw_trim_a.mp4"

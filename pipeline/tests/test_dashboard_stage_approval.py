@@ -34,11 +34,19 @@ def temp_env(monkeypatch):
 
     import pipeline.dashboard.database as db_mod
     monkeypatch.setattr(db_mod, "DEFAULT_DB_PATH", db_file)
+    monkeypatch.setenv("JOBS_DB_PATH", str(db_file))
 
     # Patch app.py database paths as well
     monkeypatch.setattr("pipeline.dashboard.app.init_db", lambda: init_db(db_file))
 
+    # Clear stale pipeline lock if left over by prior tests
+    lock_file = ROOT_DIR / "pipeline.lock"
+    if lock_file.exists():
+        lock_file.unlink(missing_ok=True)
+
     yield tmp_dir, db_file
+    if lock_file.exists():
+        lock_file.unlink(missing_ok=True)
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -179,6 +187,8 @@ def test_queue_worker_halts_and_resumes_approval(temp_env, monkeypatch):
     assert job_queued_again["require_approval"] == 0
 
     # Second worker cycle: picks up approved job and completes rendering and publishing
+    import time
+    time.sleep(0.2)
     queue_worker_step()
 
     job_completed = get_job(str(job_id), db_path=db_file)

@@ -2,7 +2,7 @@
 
 Gates Editor, Subtitle Generator, and NVENC Render Worker deliverables:
 1. Tier 1 (Deterministic Timeline & Master Inspection):
-   - Micro-Cut Duration: 1.2s to 2.2s cuts (hard ceiling <= 2.5s).
+   - Micro-Cut Duration: PROVISIONAL / HEURISTIC: 1.2s to 2.2s cuts (hard ceiling <= 2.5s; uncalibrated against live audience analytics).
    - Hard-Burned Subtitles: Verifies 0 soft subtitle streams in final MP4 container.
    - Subtitle Geometry: Validates kinetic ASS positioning (locked at Y=1400).
    - Audio/Video Sync: Video duration strictly aligned with master audio (+/-0.15s).

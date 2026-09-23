@@ -5,8 +5,15 @@ Per Rule 4 (VALIDATE LLM OUTPUT):
 - Invalid outputs trigger bounded retries, then deterministic fallback templates.
 """
 
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from enum import Enum
+from typing import Any, List, Optional
+from pydantic import BaseModel, Field, model_validator
+
+
+class AssetSource(str, Enum):
+    """Supported visual asset sourcing engines."""
+    PEXELS = "pexels"
+    COMFYUI = "comfyui"
 
 
 class IdeaConcept(BaseModel):
@@ -45,10 +52,21 @@ class ScriptSegment(BaseModel):
         description="Spoken voiceover script for this segment (concise, high-impact English)",
         min_length=3
     )
+    pexels_query: Optional[str] = Field(
+        default=None,
+        description="Natural stock-footage search phrasing for Pexels (e.g. 'macro lens glowing computer chip')"
+    )
+    sd_prompt: Optional[str] = Field(
+        default=None,
+        description="SD1.5-appropriate generation prompt with lighting, atmosphere, and visual detail tags"
+    )
+    asset_source: Optional[str] = Field(
+        default="pexels",
+        description="Target asset source: 'pexels' for stock footage or 'comfyui' for AI generation"
+    )
     visual_query: str = Field(
-        ...,
-        description="Search keywords for stock footage or prompt description for image generation (e.g. 'cinematic close up of futuristic robot')",
-        min_length=3
+        default="",
+        description="Search keywords or visual description for video asset sourcing"
     )
     visual_shots: Optional[List[str]] = Field(
         default=None,
@@ -60,9 +78,27 @@ class ScriptSegment(BaseModel):
     )
     duration_seconds: float = Field(
         ...,
-        description="Estimated duration of this segment in seconds (typically 3 to 10 seconds)",
-        ge=1.0
+        description="Estimated duration of this segment in seconds (bounded between 4.0 and 12.0 seconds)",
+        ge=4.0,
+        le=12.0
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_visual_query(cls, values: Any) -> Any:
+        """Ensures bidirectional compatibility between visual_query, pexels_query, and sd_prompt."""
+        if isinstance(values, dict):
+            vq = values.get("visual_query") or ""
+            pq = values.get("pexels_query") or ""
+            sd = values.get("sd_prompt") or ""
+            chosen = pq or sd or vq or "cinematic vertical footage"
+            if not vq:
+                values["visual_query"] = chosen
+            if not values.get("pexels_query"):
+                values["pexels_query"] = vq or chosen
+            if not values.get("sd_prompt"):
+                values["sd_prompt"] = vq or chosen
+        return values
 
 
 class Script(BaseModel):

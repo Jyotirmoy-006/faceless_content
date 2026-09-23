@@ -141,5 +141,48 @@ class SingleAccountRateLimiter:
             self._total_wait_seconds = 0.0
 
 
-# Shared singleton instance for all agents & department heads
-global_rate_limiter = SingleAccountRateLimiter(max_rpm=10, min_delay_seconds=0.8)
+
+class AccountRateLimiterPool:
+    """Manages individual SingleAccountRateLimiter instances per account_id to maximize multi-account throughput."""
+
+    def __init__(
+        self,
+        max_rpm: int = 10,
+        min_delay_seconds: float = 0.8
+    ) -> None:
+        self.max_rpm = max_rpm
+        self.min_delay_seconds = min_delay_seconds
+        self._pool: Dict[Any, SingleAccountRateLimiter] = {}
+        self._lock = threading.Lock()
+
+    def get_limiter(self, account_id: Any) -> SingleAccountRateLimiter:
+        """Returns or instantiates a SingleAccountRateLimiter dedicated to account_id."""
+        with self._lock:
+            if account_id not in self._pool:
+                self._pool[account_id] = SingleAccountRateLimiter(
+                    max_rpm=self.max_rpm,
+                    min_delay_seconds=self.min_delay_seconds
+                )
+            return self._pool[account_id]
+
+    def acquire(self, account_id: Any, timeout: Optional[float] = None) -> bool:
+        """Acquires a rate-limit slot specifically for account_id."""
+        return self.get_limiter(account_id).acquire(timeout=timeout)
+
+    def reset_all(self) -> None:
+        """Resets all account rate limiters in the pool (useful for test isolation)."""
+        with self._lock:
+            for limiter in self._pool.values():
+                limiter.reset()
+
+    def get_pool_status(self) -> Dict[int, Dict[str, Any]]:
+        """Returns rate-limiting status for all active accounts."""
+        with self._lock:
+            return {acc_id: limiter.get_status() for acc_id, limiter in self._pool.items()}
+
+
+# Multi-account rate limiter pool: assigns an independent rate limiter per healthy account
+account_rate_limiter_pool = AccountRateLimiterPool(max_rpm=10, min_delay_seconds=0.8)
+
+# Backward-compatible global limiter referencing Account 1
+global_rate_limiter = account_rate_limiter_pool.get_limiter(1)

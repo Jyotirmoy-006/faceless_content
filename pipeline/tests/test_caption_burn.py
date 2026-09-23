@@ -165,12 +165,12 @@ class TestCaptionBurn(unittest.TestCase):
         self.assertTrue(audio_path.exists(), f"Audio file not found: {audio_path}")
         self.assertTrue(srt_path.exists() or ass_path.exists(), "Subtitles file not found")
 
-        # Create 1080x1920 background clip
+        # Create 1080x1920 background clip (18s to cover 16.9s narration)
         bg_clip = self.test_dir / "bg_1080x1920.mp4"
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi",
             "-i", "testsrc=size=1080x1920:rate=30",
-            "-t", "5", "-c:v", "libx264", str(bg_clip)
+            "-t", "18", "-c:v", "libx264", str(bg_clip)
         ], check=True, capture_output=True)
 
         final_render = self.test_dir / "rendered_reel_with_captions.mp4"
