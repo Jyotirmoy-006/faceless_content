@@ -47,6 +47,17 @@
         "glowing countdown timer hitting zero dramatic lighting"
       ],
       "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 5,
+      "narration": "Once you realize the simulation pattern, your whole feed will never look the same again.",
+      "visual_query": "digital matrix rain reflection sunglasses close up cyberpunk",
+      "visual_shots": [
+        "extreme close up matrix code reflecting on dark sunglasses",
+        "subtle glitch wave rippling across holographic cityscape",
+        "glowing neon portal opening in midnight void"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Follow to farm maximum aura and never miss the lore."

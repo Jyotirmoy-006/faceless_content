@@ -8,19 +8,56 @@
       "segment_index": 1,
       "narration": "In the archives of antiquity lies an overlooked treaty that redrew continental trade routes overnight.",
       "visual_query": "ancient parchment map with compass and flickering candlelight historical cinematic",
-      "duration_seconds": 9.0
+      "visual_shots": [
+        "macro ancient yellowed map with antique brass compass",
+        "flickering candle flame illuminating handwritten Latin script",
+        "dramatic tilt up wax seal on royal proclamation"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 2,
       "narration": "What historians thought was a minor local skirmish actually triggered the collapse of an empire.",
       "visual_query": "medieval castle ruins surrounded by morning mist atmospheric epic drone shot",
-      "duration_seconds": 10.0
+      "visual_shots": [
+        "atmospheric mist rolling over ancient stone fortress walls",
+        "silhouette of armored knight standing atop windy hill",
+        "dramatic aerial view battle terrain covered in fog"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 3,
-      "narration": "Today, modern borders and global commerce still reflect that fateful afternoon.",
+      "narration": "Secret alliances formed in shadowy chambers determined the fate of royal dynasties.",
+      "visual_query": "stone corridor gothic cathedral torchlight shadows dramatic",
+      "visual_shots": [
+        "cloaked diplomats conferring in shadowy stone vault",
+        "wax candle dripping onto heavy wooden council table",
+        "close up quill pen signing historical decree"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 4,
+      "narration": "Within months, entire currency systems collapsed, shifting economic hegemony across continents.",
+      "visual_query": "ancient silver and gold coins scattered on rustic wooden table",
+      "visual_shots": [
+        "macro antique minted silver coins falling in slow motion",
+        "ancient sailing ship navigating turbulent ocean storm",
+        "merchant caravans crossing golden desert dunes"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 5,
+      "narration": "Today, modern borders and global commerce still reflect the echoes of that fateful afternoon.",
       "visual_query": "vintage antique library filled with leather bound books golden hour dust motes",
-      "duration_seconds": 11.0
+      "visual_shots": [
+        "sunlight streaming through stained glass library window",
+        "historian carefully turning delicate centuries old page",
+        "grand antique globes and astronomical armillary spheres"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Subscribe to explore the hidden stories that shaped our world."

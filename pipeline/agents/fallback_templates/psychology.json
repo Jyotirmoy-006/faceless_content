@@ -8,19 +8,56 @@
       "segment_index": 1,
       "narration": "Cognitive scientists mapped neural pathways and discovered unconscious heuristics dictate our daily habits.",
       "visual_query": "3d glowing human brain neural synapse firing blue purple abstract",
-      "duration_seconds": 9.0
+      "visual_shots": [
+        "macro glowing synaptic firing neural network purple",
+        "holographic human brain rotating glowing nodes",
+        "extreme close up focused human eye pupil dilating"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 2,
       "narration": "When cognitive dissonance occurs, the mind rationalizes choices rather than admitting error.",
       "visual_query": "silhouette of thinker in front of complex geometric reflections mirror labyrinth",
-      "duration_seconds": 10.0
+      "visual_shots": [
+        "silhouette in endless mirror corridor geometric reflections",
+        "dramatic shadow cast across contemplative face",
+        "surreal floating puzzle pieces assembling in dark void"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 3,
+      "narration": "Confirmation bias blinds us to contrary evidence, trapping attention in self-affirming loops.",
+      "visual_query": "infinite social media feed scrolling rapid screen glow dark room",
+      "visual_shots": [
+        "rapid scrolling smartphone screen reflecting on glass",
+        "abstract glowing circular maze with pulsating center",
+        "over the shoulder view person immersed in glowing screens"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 4,
+      "narration": "By noticing the emotional impulse first, you interrupt automatic conditioning before it takes over.",
+      "visual_query": "stop motion water drop ripple calm stillness mindfulness",
+      "visual_shots": [
+        "single water drop falling into perfectly still surface",
+        "deep breath chest rising in misty morning light",
+        "zen stones balanced carefully near mountain stream"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 5,
       "narration": "Recognizing this psychological filter allows you to break reactive patterns and reclaim intentional focus.",
-      "visual_query": "zen stones balanced peacefully near calm water mountain reflection sunrise",
-      "duration_seconds": 11.0
+      "visual_query": "person standing peacefully on mountain peak sunrise clarity",
+      "visual_shots": [
+        "silhouette on misty mountain peak at sunrise",
+        "sun rays breaking through dramatic clouds",
+        "calm serene landscape reflecting clear morning light"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Follow for daily cognitive psychology insights."

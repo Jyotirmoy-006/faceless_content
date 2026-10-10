@@ -8,19 +8,56 @@
       "segment_index": 1,
       "narration": "Inflation quietly drains purchasing power when capital sits idle in traditional accounts.",
       "visual_query": "stack of golden bullion coins and green dollar notes dramatic studio lighting",
-      "duration_seconds": 9.0
+      "visual_shots": [
+        "macro stack of golden bullion bars reflecting lights",
+        "extreme close up clock ticking over paper currency",
+        "digital stock ticker numbers changing rapidly"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 2,
-      "narration": "Instead, institutional capital moves into compounding assets that generate cash flow regardless of market cycles.",
+      "narration": "Instead, institutional capital moves into compounding assets that generate cash flow continuously.",
       "visual_query": "financial stock market chart trading screen green candlestick upward trend",
-      "duration_seconds": 10.0
+      "visual_shots": [
+        "high tech financial trading multi monitor setup",
+        "glowing green candlestick chart spiking upwards",
+        "automated trading algorithms scrolling code"
+      ],
+      "duration_seconds": 6.0
     },
     {
       "segment_index": 3,
-      "narration": "Building financial resilience begins with mastering the spread between earned income and invested assets.",
-      "visual_query": "luxurious modern corporate skyscraper window overlooking thriving financial district",
-      "duration_seconds": 11.0
+      "narration": "Every major fortune is built by acquiring productive assets that appreciate over decades.",
+      "visual_query": "luxurious modern corporate skyscraper window overlooking financial district",
+      "visual_shots": [
+        "modern glass boardroom overlooking metropolitan skyline",
+        "architectural time lapse financial district skyscrapers",
+        "dramatic drone shot banking center at twilight"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 4,
+      "narration": "The secret is reinvesting every dividend into asymmetric upside opportunities.",
+      "visual_query": "digital wallet payment transaction cryptographic token glowing",
+      "visual_shots": [
+        "macro fingerprint sensor authorizing asset transfer",
+        "golden coins multiplying in digital animation",
+        "financial analyst reviewing balance sheet on tablet"
+      ],
+      "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 5,
+      "narration": "Building true resilience begins with mastering the spread between your income and invested capital.",
+      "visual_query": "investor walking through modern luxury architectural pavilion sunrise",
+      "visual_shots": [
+        "investor silhouette looking out at dawn over city",
+        "sunrise golden light illuminating modern architecture",
+        "geometric glass dome reflecting morning sun"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Follow for daily financial leverage principles."

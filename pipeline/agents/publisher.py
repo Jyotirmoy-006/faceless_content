@@ -302,6 +302,7 @@ class PublisherAgent:
                 logger.warning(f"Failed to load credentials from {token_path}: {e}")
 
         if not creds or not creds.valid:
+            refreshed = False
             if creds and creds.expired and creds.refresh_token:
                 try:
                     from google.auth.transport.requests import Request
@@ -309,22 +310,24 @@ class PublisherAgent:
                     with open(token_path, "w", encoding="utf-8") as token_file:
                         token_file.write(creds.to_json())
                     logger.info("[YOUTUBE_OAUTH] Token refreshed successfully.")
+                    refreshed = True
                 except Exception as ref_err:
-                    err_msg = f"[YOUTUBE_OAUTH_EXPIRED] Token refresh failed: {ref_err}"
-                    logger.error(err_msg)
-                    raise RuntimeError(err_msg) from ref_err
-            elif client_secrets_path.exists():
-                from google_auth_oauthlib.flow import InstalledAppFlow
-                logger.info(f"Initiating YouTube OAuth consent flow using {client_secrets_path.name} with expanded scopes...")
-                flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), YOUTUBE_SCOPES)
-                creds = flow.run_local_server(port=0, open_browser=True)
-                with open(token_path, "w", encoding="utf-8") as token_file:
-                    token_file.write(creds.to_json())
-                logger.info(f"YouTube OAuth token generated and saved to {token_path.name}")
-            else:
-                raise FileNotFoundError(
-                    f"YouTube client secrets file not found at {client_secrets_path} and no valid {token_path} present."
-                )
+                    logger.warning(f"[YOUTUBE_OAUTH_EXPIRED] Token refresh failed ({ref_err}). Falling back to client_secrets OAuth consent flow.")
+                    creds = None
+
+            if not refreshed:
+                if client_secrets_path.exists():
+                    from google_auth_oauthlib.flow import InstalledAppFlow
+                    logger.info(f"Initiating YouTube OAuth consent flow using {client_secrets_path.name} with expanded scopes...")
+                    flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), YOUTUBE_SCOPES)
+                    creds = flow.run_local_server(port=0, open_browser=True)
+                    with open(token_path, "w", encoding="utf-8") as token_file:
+                        token_file.write(creds.to_json())
+                    logger.info(f"YouTube OAuth token generated and saved to {token_path.name}")
+                else:
+                    raise FileNotFoundError(
+                        f"YouTube client secrets file not found at {client_secrets_path} and no valid {token_path} present."
+                    )
 
         channel_info = get_authenticated_channel_info(creds)
         if channel_info.get("channel_title"):

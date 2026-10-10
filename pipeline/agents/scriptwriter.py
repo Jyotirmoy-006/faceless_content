@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -106,6 +107,17 @@ def load_fallback_template(topic: str, niche: Optional[str] = None) -> Script:
                         "silhouette person watching futuristic city sunrise",
                         "dramatic sunset golden hour horizon reflection",
                         "rapid zoom out high tech metropolis"
+                    ],
+                    duration_seconds=6.0
+                ),
+                ScriptSegment(
+                    segment_index=5,
+                    narration="Once you understand this hidden pattern, you see the world with completely fresh eyes.",
+                    visual_query="mind bending optical illusion geometry abstract cinematic 4k",
+                    visual_shots=[
+                        "macro glass prism refracting bright rainbow spectrum",
+                        "ambient particles floating in beam of morning light",
+                        "smooth cinematic crane shot futuristic library"
                     ],
                     duration_seconds=6.0
                 )
@@ -303,7 +315,13 @@ def get_valid_script(
         except Exception as api_err:
             last_failure_reason = f"{api_err.__class__.__name__}: {api_err}"
             logger.info(f"API/Network error on attempt {attempt + 1}: {last_failure_reason}")
-            if attempt >= max_retries:
+            if attempt < max_retries:
+                # Cycle model to backup model if available
+                if attempt < len(BACKUP_MODELS):
+                    model_name = BACKUP_MODELS[attempt]
+                    logger.info(f"Switching to backup model '{model_name}' for next attempt.")
+                time.sleep(min(2 * (attempt + 1), 5))
+            else:
                 break
 
     # If all attempts exhausted, trigger Rule 4 & Rule 2 fallback

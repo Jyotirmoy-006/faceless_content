@@ -47,6 +47,17 @@
         "wide cinematic drone view futuristic skyline"
       ],
       "duration_seconds": 6.0
+    },
+    {
+      "segment_index": 5,
+      "narration": "The moment you look beneath the surface, reality becomes far more fascinating than fiction.",
+      "visual_query": "kaleidoscopic light prism reflection abstract beautiful 4k",
+      "visual_shots": [
+        "macro glass prism refracting bright rainbow beam",
+        "ambient particles floating in cinematic beam of sunlight",
+        "high speed photography water splash crown"
+      ],
+      "duration_seconds": 6.0
     }
   ],
   "cta": "Follow for more mind-bending discoveries every day."
